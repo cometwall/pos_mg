@@ -1,0 +1,779 @@
+-- ============================================================
+-- MI TIENDA — Esquema SQLite (v4.2 — endurecimiento)
+-- Fase 2: Diseño de datos (versión congelada, migración v1)
+--
+-- v4.2 NO agrega funcionalidad nueva. Responde una sola pregunta:
+-- ¿puede la base de datos llegar a un estado económicamente
+-- imposible aunque la capa de aplicación (Dart) tenga un bug?
+-- Cada trigger nuevo de esta versión existe para cerrar un caso
+-- concreto en el que la respuesta anterior era "sí, podría".
+--
+-- Principios rectores:
+--   1. Todo estado se DERIVA de movimientos; nunca se edita un saldo.
+--   2. Dinero en CENTAVOS (INTEGER). Cantidades siempre INTEGER.
+--      Aritmética de peso 100% entera, sin ningún paso de punto flotante.
+--   3. Las tablas de HECHOS son APPEND-ONLY, reforzado con triggers.
+--   4. movimiento_caja es EXCLUSIVAMENTE efectivo físico; tarjeta
+--      vive solo en `pago`. Solo se puede insertar en sesión ABIERTA.
+--   5. CANCELAR lleva cada cuenta a su estado neto pendiente, nunca
+--      revierte ciegamente el documento original.
+--   6. Cualquier dinero que la tienda deba por una venta específica
+--      primero abona la deuda pendiente de esa misma venta.
+--   7. Depósito (Tipo A), préstamo (Tipo C) y deuda monetaria son
+--      tres conceptos independientes.
+--   8. subtotal_centavos / total_centavos son SNAPSHOTS HISTÓRICOS
+--      congelados, no saldos derivados.
+--   9. Una venta CANCELADA es un documento cerrado: no admite nuevos
+--      pagos, devoluciones, ni movimientos de sus cuentas por la vía
+--      "normal" — solo por la vía explícita de cancelación.
+--  10. pago.iva_centavos es el desglose fiscal DE ESE PAGO CON
+--      TARJETA específico — nunca cambia venta.total_centavos ni se
+--      acumula en ningún otro lugar.
+--
+-- NOTA: PRAGMA foreign_keys = ON se activa por conexión desde Dart
+-- (AppDatabase.beforeOpen), no aquí: drift no permite PRAGMA dentro
+-- de un archivo .drift, y de todos modos SQLite no persiste PRAGMAs.
+-- ============================================================
+
+-- ============================================================
+-- 0. TERMINALES, USUARIOS, CAJA
+-- ============================================================
+
+CREATE TABLE terminal (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre          TEXT NOT NULL,
+    codigo          TEXT NOT NULL UNIQUE,
+    activo          INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1))
+);
+
+CREATE TABLE usuario (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre          TEXT NOT NULL,
+    rol             TEXT NOT NULL CHECK (rol IN ('DUEÑO','CAJERO')),
+    activo          INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1)),
+    creado_en       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Una sesión ABIERTA nunca tiene datos de cierre, y una CERRADA
+-- siempre los tiene completos.
+CREATE TABLE caja_sesion (
+    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+    terminal_id                  INTEGER NOT NULL REFERENCES terminal(id),
+    usuario_apertura_id          INTEGER NOT NULL REFERENCES usuario(id),
+    usuario_cierre_id            INTEGER REFERENCES usuario(id),
+    fecha_apertura                TEXT NOT NULL DEFAULT (datetime('now')),
+    efectivo_inicial_centavos    INTEGER NOT NULL CHECK (efectivo_inicial_centavos >= 0),
+    fecha_cierre                 TEXT,
+    efectivo_esperado_centavos   INTEGER,
+    efectivo_contado_centavos    INTEGER,
+    diferencia_centavos          INTEGER,
+    estado                        TEXT NOT NULL DEFAULT 'ABIERTA' CHECK (estado IN ('ABIERTA','CERRADA')),
+    CHECK (
+        (estado = 'ABIERTA' AND fecha_cierre IS NULL AND usuario_cierre_id IS NULL
+            AND efectivo_esperado_centavos IS NULL AND efectivo_contado_centavos IS NULL
+            AND diferencia_centavos IS NULL)
+        OR
+        (estado = 'CERRADA' AND fecha_cierre IS NOT NULL AND usuario_cierre_id IS NOT NULL
+            AND efectivo_esperado_centavos IS NOT NULL AND efectivo_contado_centavos IS NOT NULL
+            AND diferencia_centavos IS NOT NULL)
+    )
+);
+
+CREATE INDEX idx_caja_terminal ON caja_sesion(terminal_id);
+CREATE UNIQUE INDEX idx_caja_unica_abierta ON caja_sesion(terminal_id) WHERE estado = 'ABIERTA';
+
+-- ============================================================
+-- 1. CATÁLOGO: CATEGORÍAS, ENVASES, PRODUCTOS
+-- ============================================================
+
+CREATE TABLE categoria (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre          TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE tipo_envase (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre                      TEXT NOT NULL UNIQUE,
+    valor_deposito_centavos     INTEGER NOT NULL DEFAULT 0 CHECK (valor_deposito_centavos >= 0),
+    valor_reposicion_centavos   INTEGER CHECK (valor_reposicion_centavos IS NULL OR valor_reposicion_centavos >= 0),
+    activo                      INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1))
+);
+
+-- unidad='pieza': precio_venta_centavos por pieza, cantidades en piezas.
+-- unidad='peso':  precio_venta_centavos por KILOGRAMO, cantidades en GRAMOS.
+CREATE TABLE producto (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    categoria_id                INTEGER REFERENCES categoria(id),
+    tipo_envase_id              INTEGER REFERENCES tipo_envase(id),
+    nombre                      TEXT NOT NULL,
+    codigo_barras               TEXT UNIQUE,
+    codigo_interno              TEXT NOT NULL UNIQUE,
+    unidad                      TEXT NOT NULL CHECK (unidad IN ('pieza','peso')),
+    precio_venta_centavos       INTEGER NOT NULL CHECK (precio_venta_centavos >= 0),
+    costo_referencia_centavos   INTEGER CHECK (costo_referencia_centavos IS NULL OR costo_referencia_centavos >= 0),
+    activo                      INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1)),
+    creado_en                   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_producto_codigo_barras ON producto(codigo_barras);
+CREATE INDEX idx_producto_categoria ON producto(categoria_id);
+
+-- ============================================================
+-- 2. INVENTARIO DE PRODUCTOS  (tabla de hechos — append-only)
+-- ============================================================
+
+CREATE TABLE movimiento_inventario (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    producto_id     INTEGER NOT NULL REFERENCES producto(id),
+    tipo            TEXT NOT NULL CHECK (tipo IN
+                        ('COMPRA','VENTA','DEVOLUCION','CANCELACION','AJUSTE','MERMA')),
+    cantidad        INTEGER NOT NULL CHECK (cantidad != 0),
+    referencia_tipo TEXT CHECK (referencia_tipo IN
+                        ('COMPRA','VENTA','DEVOLUCION','CANCELACION_VENTA','CANCELACION_COMPRA','AJUSTE_MANUAL')),
+    referencia_id   INTEGER,
+    reversa_de_id   INTEGER REFERENCES movimiento_inventario(id),
+    usuario_id      INTEGER NOT NULL REFERENCES usuario(id),
+    fecha           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_mov_inv_producto ON movimiento_inventario(producto_id);
+CREATE INDEX idx_mov_inv_fecha ON movimiento_inventario(fecha);
+
+-- ============================================================
+-- 2b. SALDO MATERIALIZADO DE INVENTARIO
+-- ============================================================
+-- inventario_saldo NO es una segunda fuente de verdad: es una
+-- proyección de movimiento_inventario, mantenida incrementalmente,
+-- que existe ÚNICAMENTE para evitar SUM(cantidad) sobre todo el
+-- historial en cada consulta de stock. movimiento_inventario sigue
+-- siendo el historial completo y la fuente de verdad.
+CREATE TABLE inventario_saldo (
+    producto_id      INTEGER PRIMARY KEY REFERENCES producto(id),
+    cantidad_actual  INTEGER NOT NULL CHECK (cantidad_actual >= 0),
+    actualizado_en   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- --- Mecanismo de autorización interna --------------------------
+-- Tabla de control de vida muy corta (dentro de la misma transacción
+-- que el movimiento) usada para distinguir "esta escritura viene del
+-- propio sistema (vía movimiento_inventario)" de "esta escritura la
+-- intentó la aplicación directamente". Se usa una tabla normal (no
+-- TEMP) porque SQLite no resuelve nombres TEMP sin calificar dentro
+-- del cuerpo de un trigger. En reposo esta tabla siempre está vacía.
+CREATE TABLE saldo_guard (activo INTEGER NOT NULL);
+
+-- Actualiza (o crea, la primera vez) el saldo del producto cada vez
+-- que se inserta un movimiento, aplicando solo el delta de
+-- NEW.cantidad. Al ser AFTER INSERT ocurre en la misma transacción
+-- que el INSERT en movimiento_inventario: si fallara (por el CHECK
+-- >= 0), toda la transacción se revierte.
+--
+-- Deliberadamente NO se usa upsert: SQLite valida el CHECK contra la
+-- fila candidata del INSERT antes de detectar el conflicto de clave,
+-- así que un movimiento negativo fallaría viendo solo
+-- "cantidad_actual = NEW.cantidad" sin calcular el resultado real.
+CREATE TRIGGER trg_saldo_actualizar
+AFTER INSERT ON movimiento_inventario
+FOR EACH ROW
+BEGIN
+    INSERT INTO saldo_guard (activo) VALUES (1);
+
+    UPDATE inventario_saldo
+       SET cantidad_actual = cantidad_actual + NEW.cantidad,
+           actualizado_en = datetime('now')
+     WHERE producto_id = NEW.producto_id;
+
+    INSERT INTO inventario_saldo (producto_id, cantidad_actual, actualizado_en)
+    SELECT NEW.producto_id, NEW.cantidad, datetime('now')
+     WHERE (SELECT changes()) = 0;
+
+    DELETE FROM saldo_guard;
+END;
+
+-- Bloquea cualquier escritura de la aplicación que NO pase por el
+-- trigger anterior (es decir, que no tenga la bandera activa). El
+-- mismo mecanismo permite la reconstrucción administrativa
+-- documentada en app_database.dart (activando la bandera
+-- manualmente en ese único procedimiento controlado).
+CREATE TRIGGER trg_saldo_no_insert_directo
+BEFORE INSERT ON inventario_saldo
+FOR EACH ROW
+WHEN NOT EXISTS (SELECT 1 FROM saldo_guard)
+BEGIN
+    SELECT RAISE(ABORT, 'inventario_saldo no se escribe directamente: solo se actualiza vía movimiento_inventario');
+END;
+
+CREATE TRIGGER trg_saldo_no_update_directo
+BEFORE UPDATE ON inventario_saldo
+FOR EACH ROW
+WHEN NOT EXISTS (SELECT 1 FROM saldo_guard)
+BEGIN
+    SELECT RAISE(ABORT, 'inventario_saldo no se escribe directamente: solo se actualiza vía movimiento_inventario');
+END;
+
+CREATE TRIGGER trg_saldo_no_delete_directo
+BEFORE DELETE ON inventario_saldo
+FOR EACH ROW
+WHEN NOT EXISTS (SELECT 1 FROM saldo_guard)
+BEGIN
+    SELECT RAISE(ABORT, 'inventario_saldo no se elimina directamente (solo vía reconstrucción administrativa controlada)');
+END;
+
+-- ============================================================
+-- 3. COMPRAS
+-- ============================================================
+
+CREATE TABLE proveedor (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre          TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE compra (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    terminal_id         INTEGER NOT NULL REFERENCES terminal(id),
+    caja_sesion_id      INTEGER REFERENCES caja_sesion(id),
+    folio               TEXT NOT NULL UNIQUE,
+    proveedor_id        INTEGER NOT NULL REFERENCES proveedor(id),
+    usuario_id          INTEGER NOT NULL REFERENCES usuario(id),
+    fecha               TEXT NOT NULL DEFAULT (datetime('now')),
+    total_centavos      INTEGER NOT NULL DEFAULT 0 CHECK (total_centavos >= 0),
+    estado              TEXT NOT NULL DEFAULT 'COMPLETADA' CHECK (estado IN ('COMPLETADA','CANCELADA'))
+);
+
+CREATE TABLE detalle_compra (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    compra_id                   INTEGER NOT NULL REFERENCES compra(id),
+    producto_id                 INTEGER NOT NULL REFERENCES producto(id),
+    cantidad                    INTEGER NOT NULL CHECK (cantidad > 0),
+    costo_unitario_centavos     INTEGER NOT NULL CHECK (costo_unitario_centavos >= 0),
+    subtotal_centavos           INTEGER NOT NULL CHECK (subtotal_centavos >= 0)
+);
+
+CREATE INDEX idx_detalle_compra_compra ON detalle_compra(compra_id);
+CREATE INDEX idx_detalle_compra_producto ON detalle_compra(producto_id);
+
+-- ============================================================
+-- 4. CLIENTES
+-- ============================================================
+
+CREATE TABLE cliente (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre                      TEXT NOT NULL,
+    telefono                    TEXT,
+    umbral_advertencia_centavos INTEGER,
+    activo                      INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1)),
+    creado_en                   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- 5. VENTAS
+-- ============================================================
+
+CREATE TABLE venta (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    terminal_id         INTEGER NOT NULL REFERENCES terminal(id),
+    folio               TEXT NOT NULL UNIQUE,
+    cliente_id          INTEGER REFERENCES cliente(id),
+    usuario_id          INTEGER NOT NULL REFERENCES usuario(id),
+    fecha               TEXT NOT NULL DEFAULT (datetime('now')),
+    estado              TEXT NOT NULL DEFAULT 'COMPLETADA' CHECK (estado IN ('COMPLETADA','CANCELADA')),
+    subtotal_centavos   INTEGER NOT NULL DEFAULT 0 CHECK (subtotal_centavos >= 0),
+    total_centavos      INTEGER NOT NULL DEFAULT 0 CHECK (total_centavos >= 0)
+);
+
+CREATE INDEX idx_venta_cliente ON venta(cliente_id);
+CREATE INDEX idx_venta_terminal ON venta(terminal_id);
+CREATE INDEX idx_venta_fecha ON venta(fecha);
+
+CREATE TABLE detalle_venta (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    venta_id                    INTEGER NOT NULL REFERENCES venta(id),
+    producto_id                 INTEGER NOT NULL REFERENCES producto(id),
+    cantidad                    INTEGER NOT NULL CHECK (cantidad > 0),
+    precio_unitario_centavos    INTEGER NOT NULL CHECK (precio_unitario_centavos >= 0),
+    costo_unitario_centavos     INTEGER NOT NULL CHECK (costo_unitario_centavos >= 0),
+    subtotal_centavos           INTEGER NOT NULL CHECK (subtotal_centavos >= 0)
+);
+
+CREATE INDEX idx_detalle_venta_venta ON detalle_venta(venta_id);
+CREATE INDEX idx_detalle_venta_producto ON detalle_venta(producto_id);
+CREATE UNIQUE INDEX uq_detalle_venta_integridad ON detalle_venta(id, venta_id, producto_id);
+
+CREATE TABLE operacion_envase (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    venta_id                    INTEGER NOT NULL REFERENCES venta(id),
+    tipo_envase_id              INTEGER NOT NULL REFERENCES tipo_envase(id),
+    tipo                        TEXT NOT NULL CHECK (tipo IN
+                                    ('DEPOSITO_COBRADO','RECIBIDO','ENTREGADO','PRESTADO')),
+    cantidad                    INTEGER NOT NULL CHECK (cantidad > 0),
+    monto_unitario_centavos     INTEGER CHECK (
+                                    (tipo = 'DEPOSITO_COBRADO' AND monto_unitario_centavos IS NOT NULL AND monto_unitario_centavos >= 0)
+                                    OR (tipo != 'DEPOSITO_COBRADO' AND monto_unitario_centavos IS NULL)
+                                 )
+);
+
+CREATE INDEX idx_operacion_envase_venta ON operacion_envase(venta_id);
+
+-- pago.monto_centavos = MONTO APLICADO a la venta (no efectivo físico
+-- recibido; el cambio se resuelve fuera del ledger).
+-- pago.iva_centavos = desglose fiscal DE ESE PAGO CON TARJETA
+-- específico, nunca un impuesto a nivel de venta; no puede exceder
+-- el monto de ese mismo pago.
+CREATE TABLE pago (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    venta_id                INTEGER NOT NULL REFERENCES venta(id),
+    metodo                  TEXT NOT NULL CHECK (metodo IN ('EFECTIVO','TARJETA')),
+    monto_centavos          INTEGER NOT NULL CHECK (monto_centavos > 0),
+    iva_centavos            INTEGER NOT NULL DEFAULT 0 CHECK (
+                                (metodo = 'TARJETA' AND iva_centavos >= 0 AND iva_centavos <= monto_centavos)
+                                OR (metodo = 'EFECTIVO' AND iva_centavos = 0)
+                             ),
+    fecha                   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_pago_venta ON pago(venta_id);
+
+-- ============================================================
+-- 6. CUENTAS DEL CLIENTE (tres conceptos independientes)
+-- ============================================================
+
+CREATE TABLE cuenta_monetaria_mov (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    cliente_id          INTEGER NOT NULL REFERENCES cliente(id),
+    venta_id            INTEGER REFERENCES venta(id),
+    tipo                TEXT NOT NULL CHECK (tipo IN ('CARGO','ABONO','CANCELACION')),
+    monto_centavos      INTEGER NOT NULL CHECK (monto_centavos > 0),
+    referencia_tipo     TEXT CHECK (referencia_tipo IN
+                            ('VENTA','PAGO_CUENTA','DEVOLUCION','DEVOLUCION_DEPOSITO','CANCELACION_VENTA')),
+    referencia_id       INTEGER,
+    reversa_de_id       INTEGER REFERENCES cuenta_monetaria_mov(id),
+    usuario_id          INTEGER NOT NULL REFERENCES usuario(id),
+    fecha               TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_cta_monetaria_cliente ON cuenta_monetaria_mov(cliente_id);
+CREATE INDEX idx_cta_monetaria_venta ON cuenta_monetaria_mov(venta_id);
+
+CREATE TABLE cuenta_envase_mov (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    cliente_id      INTEGER NOT NULL REFERENCES cliente(id),
+    venta_id        INTEGER REFERENCES venta(id),
+    tipo_envase_id  INTEGER NOT NULL REFERENCES tipo_envase(id),
+    tipo            TEXT NOT NULL CHECK (tipo IN ('PRESTAMO','DEVOLUCION','PAGO','CANCELACION')),
+    cantidad        INTEGER NOT NULL CHECK (cantidad > 0),
+    monto_centavos  INTEGER CHECK (
+                        (tipo = 'PAGO' AND monto_centavos IS NOT NULL AND monto_centavos >= 0)
+                        OR (tipo != 'PAGO' AND monto_centavos IS NULL)
+                     ),
+    referencia_tipo TEXT CHECK (referencia_tipo IN ('VENTA','AJUSTE_MANUAL','CANCELACION_VENTA')),
+    referencia_id   INTEGER,
+    reversa_de_id   INTEGER REFERENCES cuenta_envase_mov(id),
+    usuario_id      INTEGER NOT NULL REFERENCES usuario(id),
+    fecha           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_cta_envase_cliente ON cuenta_envase_mov(cliente_id);
+CREATE INDEX idx_cta_envase_venta ON cuenta_envase_mov(venta_id);
+
+CREATE TABLE cuenta_deposito_envase_mov (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    venta_id                    INTEGER NOT NULL REFERENCES venta(id),
+    tipo_envase_id              INTEGER NOT NULL REFERENCES tipo_envase(id),
+    tipo                        TEXT NOT NULL CHECK (tipo IN ('COBRADO','DEVUELTO','CANCELACION')),
+    cantidad                    INTEGER NOT NULL CHECK (cantidad > 0),
+    monto_unitario_centavos     INTEGER NOT NULL CHECK (monto_unitario_centavos >= 0),
+    referencia_tipo             TEXT CHECK (referencia_tipo IN ('VENTA','CANCELACION_VENTA')),
+    referencia_id               INTEGER,
+    reversa_de_id                INTEGER REFERENCES cuenta_deposito_envase_mov(id),
+    usuario_id                  INTEGER NOT NULL REFERENCES usuario(id),
+    fecha                       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_cta_deposito_venta ON cuenta_deposito_envase_mov(venta_id, tipo_envase_id);
+
+-- ============================================================
+-- 7. INVENTARIO FÍSICO DE ENVASES  (tabla de hechos — append-only)
+-- ============================================================
+
+CREATE TABLE envase_inventario_mov (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tipo_envase_id  INTEGER NOT NULL REFERENCES tipo_envase(id),
+    tipo            TEXT NOT NULL CHECK (tipo IN
+                        ('COMPRA_PROVEEDOR','SALIDA_PRESTAMO','ENTRADA_DEVOLUCION',
+                         'COMPRA_ENVASE_CLIENTE','CANCELACION','MERMA')),
+    cantidad        INTEGER NOT NULL CHECK (cantidad != 0),
+    referencia_tipo TEXT CHECK (referencia_tipo IN ('VENTA','COMPRA','CANCELACION_VENTA','AJUSTE_MANUAL')),
+    referencia_id   INTEGER,
+    reversa_de_id   INTEGER REFERENCES envase_inventario_mov(id),
+    usuario_id      INTEGER NOT NULL REFERENCES usuario(id),
+    fecha           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_envase_inv_tipo ON envase_inventario_mov(tipo_envase_id);
+
+-- ============================================================
+-- 8. DEVOLUCIONES DE PRODUCTO  (tabla de hechos — append-only)
+-- ============================================================
+
+CREATE TABLE devolucion (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    venta_id                INTEGER NOT NULL,
+    detalle_venta_id        INTEGER NOT NULL,
+    producto_id             INTEGER NOT NULL,
+    cantidad                INTEGER NOT NULL CHECK (cantidad > 0),
+    monto_devuelto_centavos INTEGER NOT NULL CHECK (monto_devuelto_centavos >= 0),
+    condicion               TEXT NOT NULL CHECK (condicion IN ('BUENO','DAÑADO')),
+    usuario_id              INTEGER NOT NULL REFERENCES usuario(id),
+    fecha                   TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (detalle_venta_id, venta_id, producto_id)
+        REFERENCES detalle_venta(id, venta_id, producto_id)
+);
+
+CREATE INDEX idx_devolucion_venta ON devolucion(venta_id);
+CREATE INDEX idx_devolucion_detalle ON devolucion(detalle_venta_id);
+
+-- ============================================================
+-- 9. MOVIMIENTOS DE CAJA  (tabla de hechos — append-only)
+-- ============================================================
+
+CREATE TABLE movimiento_caja (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    caja_sesion_id  INTEGER NOT NULL REFERENCES caja_sesion(id),
+    tipo            TEXT NOT NULL CHECK (tipo IN
+                        ('VENTA_EFECTIVO','RETIRO','ENTRADA','DEVOLUCION',
+                         'PAGO_CUENTA','PAGO_ENVASE','COMPRA_ENVASE_CLIENTE',
+                         'COMPRA','CANCELACION')),
+    monto_centavos  INTEGER NOT NULL CHECK (monto_centavos != 0),
+    motivo          TEXT,
+    referencia_tipo TEXT CHECK (referencia_tipo IN
+                        ('VENTA','DEVOLUCION','PAGO_CUENTA_CLIENTE','PAGO_ENVASE_CLIENTE',
+                         'COMPRA_ENVASE_CLIENTE','COMPRA','CANCELACION_VENTA','MANUAL')),
+    referencia_id   INTEGER,
+    reversa_de_id   INTEGER REFERENCES movimiento_caja(id),
+    usuario_id      INTEGER NOT NULL REFERENCES usuario(id),
+    fecha           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_mov_caja_sesion ON movimiento_caja(caja_sesion_id);
+CREATE INDEX idx_mov_caja_fecha ON movimiento_caja(fecha);
+
+-- ============================================================
+-- 10. TRIGGERS DE INTEGRIDAD
+-- ============================================================
+
+-- --- 10.1 Caja: solo sesiones abiertas reciben movimientos -----------
+
+CREATE TRIGGER trg_movimiento_caja_sesion_abierta
+BEFORE INSERT ON movimiento_caja
+FOR EACH ROW
+WHEN NOT EXISTS (
+    SELECT 1 FROM caja_sesion WHERE id = NEW.caja_sesion_id AND estado = 'ABIERTA'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'La sesión de caja no está abierta');
+END;
+
+-- --- 10.2 Terminal <-> caja: solo para las referencias polimórficas
+-- donde sí podemos resolver el terminal real.
+
+CREATE TRIGGER trg_mov_caja_terminal_venta
+BEFORE INSERT ON movimiento_caja
+FOR EACH ROW
+WHEN NEW.referencia_tipo = 'VENTA' AND NEW.referencia_id IS NOT NULL
+ AND (SELECT terminal_id FROM caja_sesion WHERE id = NEW.caja_sesion_id)
+     != (SELECT terminal_id FROM venta WHERE id = NEW.referencia_id)
+BEGIN
+    SELECT RAISE(ABORT, 'La caja usada no pertenece al mismo terminal que la venta');
+END;
+
+CREATE TRIGGER trg_mov_caja_terminal_compra
+BEFORE INSERT ON movimiento_caja
+FOR EACH ROW
+WHEN NEW.referencia_tipo = 'COMPRA' AND NEW.referencia_id IS NOT NULL
+ AND (SELECT terminal_id FROM caja_sesion WHERE id = NEW.caja_sesion_id)
+     != (SELECT terminal_id FROM compra WHERE id = NEW.referencia_id)
+BEGIN
+    SELECT RAISE(ABORT, 'La caja usada no pertenece al mismo terminal que la compra');
+END;
+
+-- --- 10.3 Pago: no excede el total, y solo sobre ventas COMPLETADA --
+
+CREATE TRIGGER trg_pago_no_excede_total
+BEFORE INSERT ON pago
+FOR EACH ROW
+WHEN (
+    (SELECT COALESCE(SUM(monto_centavos),0) FROM pago WHERE venta_id = NEW.venta_id) + NEW.monto_centavos
+    > (SELECT total_centavos FROM venta WHERE id = NEW.venta_id)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'La suma de pagos no puede exceder el total de la venta');
+END;
+
+CREATE TRIGGER trg_pago_venta_completada
+BEFORE INSERT ON pago
+FOR EACH ROW
+WHEN (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'COMPLETADA'
+BEGIN
+    SELECT RAISE(ABORT, 'No se pueden registrar pagos sobre una venta cancelada');
+END;
+
+-- --- 10.4 Devolución: solo sobre ventas COMPLETADA — una venta
+-- cancelada se cierra por completo.
+
+CREATE TRIGGER trg_devolucion_venta_completada
+BEFORE INSERT ON devolucion
+FOR EACH ROW
+WHEN (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'COMPLETADA'
+BEGIN
+    SELECT RAISE(ABORT, 'No se pueden registrar devoluciones sobre una venta cancelada');
+END;
+
+-- --- 10.5 Snapshots: las líneas nunca pueden exceder el total
+-- declarado en el documento (no garantiza igualdad exacta por sí
+-- solo — ver nota en app_database.dart).
+
+CREATE TRIGGER trg_detalle_venta_no_excede_subtotal
+BEFORE INSERT ON detalle_venta
+FOR EACH ROW
+WHEN (
+    (SELECT COALESCE(SUM(subtotal_centavos),0) FROM detalle_venta WHERE venta_id = NEW.venta_id) + NEW.subtotal_centavos
+    > (SELECT subtotal_centavos FROM venta WHERE id = NEW.venta_id)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'La suma de líneas de venta no puede exceder el subtotal declarado');
+END;
+
+CREATE TRIGGER trg_detalle_compra_no_excede_total
+BEFORE INSERT ON detalle_compra
+FOR EACH ROW
+WHEN (
+    (SELECT COALESCE(SUM(subtotal_centavos),0) FROM detalle_compra WHERE compra_id = NEW.compra_id) + NEW.subtotal_centavos
+    > (SELECT total_centavos FROM compra WHERE id = NEW.compra_id)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'La suma de líneas de compra no puede exceder el total declarado');
+END;
+
+-- --- 10.6 Topes de saldo: ninguna reversión/pago/devolución puede
+-- exceder lo que sigue pendiente.
+
+CREATE TRIGGER trg_monetaria_no_excede_pendiente
+BEFORE INSERT ON cuenta_monetaria_mov
+FOR EACH ROW
+WHEN NEW.tipo IN ('ABONO','CANCELACION') AND NEW.venta_id IS NOT NULL
+ AND NEW.monto_centavos > (
+    SELECT COALESCE(SUM(CASE tipo WHEN 'CARGO' THEN monto_centavos ELSE -monto_centavos END),0)
+    FROM cuenta_monetaria_mov WHERE venta_id = NEW.venta_id
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'No se puede abonar/cancelar más deuda de la que sigue pendiente para esa venta');
+END;
+
+CREATE TRIGGER trg_envase_no_excede_prestamo
+BEFORE INSERT ON cuenta_envase_mov
+FOR EACH ROW
+WHEN NEW.tipo IN ('DEVOLUCION','PAGO','CANCELACION') AND NEW.venta_id IS NOT NULL
+ AND NEW.cantidad > (
+    SELECT COALESCE(SUM(CASE tipo WHEN 'PRESTAMO' THEN cantidad ELSE -cantidad END),0)
+    FROM cuenta_envase_mov WHERE venta_id = NEW.venta_id AND tipo_envase_id = NEW.tipo_envase_id
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'No se puede devolver/pagar/cancelar más envase del que sigue prestado en esa venta');
+END;
+
+CREATE TRIGGER trg_deposito_no_excede_cobrado
+BEFORE INSERT ON cuenta_deposito_envase_mov
+FOR EACH ROW
+WHEN NEW.tipo IN ('DEVUELTO','CANCELACION')
+ AND NEW.cantidad > (
+    SELECT COALESCE(SUM(CASE tipo WHEN 'COBRADO' THEN cantidad ELSE -cantidad END),0)
+    FROM cuenta_deposito_envase_mov WHERE venta_id = NEW.venta_id AND tipo_envase_id = NEW.tipo_envase_id
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'No se puede devolver/cancelar más depósito del que sigue pendiente en esa venta');
+END;
+
+-- --- 10.7 reversa_de_id debe apuntar a un movimiento del MISMO
+-- producto / tipo de envase — impide reversas semánticamente
+-- cruzadas aunque la FK básica las permitiría.
+
+CREATE TRIGGER trg_mov_inv_reversa_valida
+BEFORE INSERT ON movimiento_inventario
+FOR EACH ROW
+WHEN NEW.reversa_de_id IS NOT NULL
+ AND (SELECT producto_id FROM movimiento_inventario WHERE id = NEW.reversa_de_id) != NEW.producto_id
+BEGIN
+    SELECT RAISE(ABORT, 'reversa_de_id debe apuntar a un movimiento del mismo producto');
+END;
+
+CREATE TRIGGER trg_envase_inv_reversa_valida
+BEFORE INSERT ON envase_inventario_mov
+FOR EACH ROW
+WHEN NEW.reversa_de_id IS NOT NULL
+ AND (SELECT tipo_envase_id FROM envase_inventario_mov WHERE id = NEW.reversa_de_id) != NEW.tipo_envase_id
+BEGIN
+    SELECT RAISE(ABORT, 'reversa_de_id debe apuntar a un movimiento del mismo tipo de envase');
+END;
+
+CREATE TRIGGER trg_cta_envase_reversa_valida
+BEFORE INSERT ON cuenta_envase_mov
+FOR EACH ROW
+WHEN NEW.reversa_de_id IS NOT NULL
+ AND (SELECT tipo_envase_id FROM cuenta_envase_mov WHERE id = NEW.reversa_de_id) != NEW.tipo_envase_id
+BEGIN
+    SELECT RAISE(ABORT, 'reversa_de_id debe apuntar a un movimiento del mismo tipo de envase');
+END;
+
+CREATE TRIGGER trg_cta_deposito_reversa_valida
+BEFORE INSERT ON cuenta_deposito_envase_mov
+FOR EACH ROW
+WHEN NEW.reversa_de_id IS NOT NULL
+ AND (SELECT tipo_envase_id FROM cuenta_deposito_envase_mov WHERE id = NEW.reversa_de_id) != NEW.tipo_envase_id
+BEGIN
+    SELECT RAISE(ABORT, 'reversa_de_id debe apuntar a un movimiento del mismo tipo de envase');
+END;
+
+-- --- 10.8 Coherencia entre el tipo de movimiento y el estado de la
+-- venta en ese instante: movimientos "normales" (CARGO/ABONO,
+-- PRESTAMO/DEVOLUCION/PAGO, COBRADO/DEVUELTO, VENTA) solo con venta
+-- COMPLETADA; movimientos de CANCELACION solo cuando la venta YA
+-- está CANCELADA (la app primero actualiza venta.estado, luego
+-- inserta estas filas).
+
+CREATE TRIGGER trg_monetaria_estado_coherente
+BEFORE INSERT ON cuenta_monetaria_mov
+FOR EACH ROW
+WHEN NEW.venta_id IS NOT NULL AND (
+    (NEW.tipo IN ('CARGO','ABONO') AND (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'COMPLETADA')
+    OR (NEW.tipo = 'CANCELACION' AND (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'CANCELADA')
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Estado de la venta incompatible con el tipo de movimiento monetario');
+END;
+
+CREATE TRIGGER trg_envase_estado_coherente
+BEFORE INSERT ON cuenta_envase_mov
+FOR EACH ROW
+WHEN NEW.venta_id IS NOT NULL AND (
+    (NEW.tipo IN ('PRESTAMO','DEVOLUCION','PAGO') AND (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'COMPLETADA')
+    OR (NEW.tipo = 'CANCELACION' AND (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'CANCELADA')
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Estado de la venta incompatible con el tipo de movimiento de envase');
+END;
+
+CREATE TRIGGER trg_deposito_estado_coherente
+BEFORE INSERT ON cuenta_deposito_envase_mov
+FOR EACH ROW
+WHEN (
+    (NEW.tipo IN ('COBRADO','DEVUELTO') AND (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'COMPLETADA')
+    OR (NEW.tipo = 'CANCELACION' AND (SELECT estado FROM venta WHERE id = NEW.venta_id) != 'CANCELADA')
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Estado de la venta incompatible con el tipo de movimiento de depósito');
+END;
+
+CREATE TRIGGER trg_mov_inv_estado_coherente
+BEFORE INSERT ON movimiento_inventario
+FOR EACH ROW
+WHEN NEW.referencia_tipo = 'VENTA' AND NEW.referencia_id IS NOT NULL AND (
+    (NEW.tipo IN ('VENTA','DEVOLUCION') AND (SELECT estado FROM venta WHERE id = NEW.referencia_id) != 'COMPLETADA')
+    OR (NEW.tipo = 'CANCELACION' AND (SELECT estado FROM venta WHERE id = NEW.referencia_id) != 'CANCELADA')
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Estado de la venta incompatible con el tipo de movimiento de inventario');
+END;
+
+-- --- 10.9 Inmutabilidad de tablas de hechos: ni UPDATE ni DELETE ----
+
+CREATE TRIGGER trg_mov_inventario_no_update BEFORE UPDATE ON movimiento_inventario
+BEGIN SELECT RAISE(ABORT, 'movimiento_inventario es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_mov_inventario_no_delete BEFORE DELETE ON movimiento_inventario
+BEGIN SELECT RAISE(ABORT, 'movimiento_inventario es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_envase_inv_no_update BEFORE UPDATE ON envase_inventario_mov
+BEGIN SELECT RAISE(ABORT, 'envase_inventario_mov es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_envase_inv_no_delete BEFORE DELETE ON envase_inventario_mov
+BEGIN SELECT RAISE(ABORT, 'envase_inventario_mov es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_cta_monetaria_no_update BEFORE UPDATE ON cuenta_monetaria_mov
+BEGIN SELECT RAISE(ABORT, 'cuenta_monetaria_mov es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_cta_monetaria_no_delete BEFORE DELETE ON cuenta_monetaria_mov
+BEGIN SELECT RAISE(ABORT, 'cuenta_monetaria_mov es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_cta_envase_no_update BEFORE UPDATE ON cuenta_envase_mov
+BEGIN SELECT RAISE(ABORT, 'cuenta_envase_mov es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_cta_envase_no_delete BEFORE DELETE ON cuenta_envase_mov
+BEGIN SELECT RAISE(ABORT, 'cuenta_envase_mov es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_cta_deposito_no_update BEFORE UPDATE ON cuenta_deposito_envase_mov
+BEGIN SELECT RAISE(ABORT, 'cuenta_deposito_envase_mov es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_cta_deposito_no_delete BEFORE DELETE ON cuenta_deposito_envase_mov
+BEGIN SELECT RAISE(ABORT, 'cuenta_deposito_envase_mov es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_mov_caja_no_update BEFORE UPDATE ON movimiento_caja
+BEGIN SELECT RAISE(ABORT, 'movimiento_caja es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_mov_caja_no_delete BEFORE DELETE ON movimiento_caja
+BEGIN SELECT RAISE(ABORT, 'movimiento_caja es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_pago_no_update BEFORE UPDATE ON pago
+BEGIN SELECT RAISE(ABORT, 'pago es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_pago_no_delete BEFORE DELETE ON pago
+BEGIN SELECT RAISE(ABORT, 'pago es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_detalle_venta_no_update BEFORE UPDATE ON detalle_venta
+BEGIN SELECT RAISE(ABORT, 'detalle_venta es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_detalle_venta_no_delete BEFORE DELETE ON detalle_venta
+BEGIN SELECT RAISE(ABORT, 'detalle_venta es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_detalle_compra_no_update BEFORE UPDATE ON detalle_compra
+BEGIN SELECT RAISE(ABORT, 'detalle_compra es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_detalle_compra_no_delete BEFORE DELETE ON detalle_compra
+BEGIN SELECT RAISE(ABORT, 'detalle_compra es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_operacion_envase_no_update BEFORE UPDATE ON operacion_envase
+BEGIN SELECT RAISE(ABORT, 'operacion_envase es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_operacion_envase_no_delete BEFORE DELETE ON operacion_envase
+BEGIN SELECT RAISE(ABORT, 'operacion_envase es append-only: no se permite DELETE'); END;
+
+CREATE TRIGGER trg_devolucion_no_update BEFORE UPDATE ON devolucion
+BEGIN SELECT RAISE(ABORT, 'devolucion es append-only: no se permite UPDATE'); END;
+CREATE TRIGGER trg_devolucion_no_delete BEFORE DELETE ON devolucion
+BEGIN SELECT RAISE(ABORT, 'devolucion es append-only: no se permite DELETE'); END;
+
+-- --- 10.10 venta y compra: nunca se borran; UPDATE restringido
+-- exclusivamente a la transición COMPLETADA -> CANCELADA -----------
+
+CREATE TRIGGER trg_venta_no_delete BEFORE DELETE ON venta
+BEGIN SELECT RAISE(ABORT, 'venta nunca se elimina, solo se cancela'); END;
+
+CREATE TRIGGER trg_venta_solo_cancelar
+BEFORE UPDATE ON venta
+FOR EACH ROW
+WHEN NOT (
+    OLD.estado = 'COMPLETADA' AND NEW.estado = 'CANCELADA'
+    AND NEW.terminal_id = OLD.terminal_id AND NEW.folio = OLD.folio
+    AND NEW.cliente_id IS OLD.cliente_id AND NEW.usuario_id = OLD.usuario_id
+    AND NEW.fecha = OLD.fecha AND NEW.subtotal_centavos = OLD.subtotal_centavos
+    AND NEW.total_centavos = OLD.total_centavos
+)
+BEGIN
+    SELECT RAISE(ABORT, 'venta: solo se permite pasar de COMPLETADA a CANCELADA; ningún otro campo es editable');
+END;
+
+CREATE TRIGGER trg_compra_no_delete BEFORE DELETE ON compra
+BEGIN SELECT RAISE(ABORT, 'compra nunca se elimina, solo se cancela'); END;
+
+CREATE TRIGGER trg_compra_solo_cancelar
+BEFORE UPDATE ON compra
+FOR EACH ROW
+WHEN NOT (
+    OLD.estado = 'COMPLETADA' AND NEW.estado = 'CANCELADA'
+    AND NEW.terminal_id = OLD.terminal_id AND NEW.caja_sesion_id IS OLD.caja_sesion_id
+    AND NEW.folio = OLD.folio AND NEW.proveedor_id = OLD.proveedor_id
+    AND NEW.usuario_id = OLD.usuario_id AND NEW.fecha = OLD.fecha
+    AND NEW.total_centavos = OLD.total_centavos
+)
+BEGIN
+    SELECT RAISE(ABORT, 'compra: solo se permite pasar de COMPLETADA a CANCELADA; ningún otro campo es editable');
+END;
