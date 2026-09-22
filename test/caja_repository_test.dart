@@ -92,4 +92,134 @@ void main() {
       throwsA(anything),
     );
   });
+
+  test('cerrarSesion con lo contado igual a lo esperado da diferencia 0', () async {
+    final sesionId = await caja.abrirSesion(
+      terminalId: terminalId,
+      usuarioAperturaId: usuarioId,
+      efectivoInicialCentavos: 50000,
+    );
+    await db.into(db.movimientoCaja).insert(
+      MovimientoCajaCompanion.insert(
+        cajaSesionId: sesionId,
+        tipo: 'ENTRADA',
+        montoCentavos: 5000,
+        usuarioId: usuarioId,
+      ),
+    );
+
+    await caja.cerrarSesion(
+      cajaSesionId: sesionId,
+      usuarioCierreId: usuarioId,
+      efectivoContadoCentavos: 55000,
+    );
+
+    final sesion = await (db.select(
+      db.cajaSesion,
+    )..where((s) => s.id.equals(sesionId))).getSingle();
+    expect(sesion.estado, 'CERRADA');
+    expect(sesion.efectivoEsperadoCentavos, 55000);
+    expect(sesion.efectivoContadoCentavos, 55000);
+    expect(sesion.diferenciaCentavos, 0);
+  });
+
+  test('cerrarSesion con sobrante y con faltante calcula la diferencia con signo', () async {
+    final sesionSobrante = await caja.abrirSesion(
+      terminalId: terminalId,
+      usuarioAperturaId: usuarioId,
+      efectivoInicialCentavos: 10000,
+    );
+    await caja.cerrarSesion(
+      cajaSesionId: sesionSobrante,
+      usuarioCierreId: usuarioId,
+      efectivoContadoCentavos: 10500,
+    );
+    var sesion = await (db.select(
+      db.cajaSesion,
+    )..where((s) => s.id.equals(sesionSobrante))).getSingle();
+    expect(sesion.diferenciaCentavos, 500);
+
+    final otroTerminalId = await db
+        .into(db.terminal)
+        .insert(TerminalCompanion.insert(nombre: 'Caja 2', codigo: 'T2'));
+    final sesionFaltante = await caja.abrirSesion(
+      terminalId: otroTerminalId,
+      usuarioAperturaId: usuarioId,
+      efectivoInicialCentavos: 10000,
+    );
+    await caja.cerrarSesion(
+      cajaSesionId: sesionFaltante,
+      usuarioCierreId: usuarioId,
+      efectivoContadoCentavos: 9800,
+    );
+    sesion = await (db.select(
+      db.cajaSesion,
+    )..where((s) => s.id.equals(sesionFaltante))).getSingle();
+    expect(sesion.diferenciaCentavos, -200);
+  });
+
+  test('cerrar una sesión ya cerrada se rechaza', () async {
+    final sesionId = await caja.abrirSesion(
+      terminalId: terminalId,
+      usuarioAperturaId: usuarioId,
+      efectivoInicialCentavos: 10000,
+    );
+    await caja.cerrarSesion(
+      cajaSesionId: sesionId,
+      usuarioCierreId: usuarioId,
+      efectivoContadoCentavos: 10000,
+    );
+
+    await expectLater(
+      caja.cerrarSesion(
+        cajaSesionId: sesionId,
+        usuarioCierreId: usuarioId,
+        efectivoContadoCentavos: 10000,
+      ),
+      throwsA(isA<SesionCajaNoAbiertaException>()),
+    );
+  });
+
+  test('cerrar una sesión inexistente se rechaza', () async {
+    await expectLater(
+      caja.cerrarSesion(
+        cajaSesionId: 9999,
+        usuarioCierreId: usuarioId,
+        efectivoContadoCentavos: 0,
+      ),
+      throwsA(isA<SesionCajaNoEncontradaException>()),
+    );
+  });
+
+  test('tras cerrar, un movimiento sobre esa sesión se rechaza y se puede abrir otra', () async {
+    final sesionId = await caja.abrirSesion(
+      terminalId: terminalId,
+      usuarioAperturaId: usuarioId,
+      efectivoInicialCentavos: 10000,
+    );
+    await caja.cerrarSesion(
+      cajaSesionId: sesionId,
+      usuarioCierreId: usuarioId,
+      efectivoContadoCentavos: 10000,
+    );
+
+    await expectLater(
+      db.into(db.movimientoCaja).insert(
+        MovimientoCajaCompanion.insert(
+          cajaSesionId: sesionId,
+          tipo: 'ENTRADA',
+          montoCentavos: 100,
+          usuarioId: usuarioId,
+        ),
+      ),
+      throwsA(anything),
+    );
+
+    final nuevaSesionId = await caja.abrirSesion(
+      terminalId: terminalId,
+      usuarioAperturaId: usuarioId,
+      efectivoInicialCentavos: 5000,
+    );
+    expect(await caja.efectivoEsperado(nuevaSesionId), 5000);
+  });
 }

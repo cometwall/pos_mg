@@ -1,30 +1,45 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+import 'package:drift/native.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:pos_mg/main.dart';
+import 'package:pos_mg/app/app.dart';
+import 'package:pos_mg/app/providers.dart';
+import 'package:pos_mg/app/session_providers.dart';
+import 'package:pos_mg/database/app_database.dart';
+import 'package:pos_mg/features/compras/controllers/compra_controllers.dart';
+import 'package:pos_mg/features/historial/controllers/sale_history_controllers.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('El shell de navegación muestra Ventas por defecto', (
+    WidgetTester tester,
+  ) async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(db),
+          // Los smoke tests de UI no necesitan ejercitar los streams
+          // reactivos de Drift (ya cubiertos por los tests de
+          // repositorio) — se sustituyen por streams estáticos para
+          // evitar un Timer interno de Drift que `flutter_test` marca
+          // como pendiente al desmontar el árbol de widgets.
+          sesionCajaAbiertaProvider.overrideWith((ref) => Stream.value(null)),
+          ventasHistorialProvider.overrideWith((ref) => Stream.value(const [])),
+          comprasHistorialProvider.overrideWith((ref) => Stream.value(const [])),
+        ],
+        child: const PosApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    expect(find.text('Buscar producto o escanear código de barras'), findsOneWidget);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    await tester.tap(find.text('Historial'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Buscar por folio'), findsOneWidget);
+    expect(find.text('Sin ventas todavía'), findsOneWidget);
   });
 }

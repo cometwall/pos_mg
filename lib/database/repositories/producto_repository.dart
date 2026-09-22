@@ -41,6 +41,12 @@ class ProductoRepository {
     );
   }
 
+  Future<ProductoData?> obtenerPorId(int id) {
+    return (_db.select(
+      _db.producto,
+    )..where((p) => p.id.equals(id))).getSingleOrNull();
+  }
+
   Future<List<ProductoData>> listarActivos() {
     return (_db.select(_db.producto)
           ..where((p) => p.activo.equals(1))

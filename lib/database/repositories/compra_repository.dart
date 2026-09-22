@@ -2,6 +2,43 @@ import 'package:drift/drift.dart';
 
 import '../app_database.dart';
 
+class CompraNoEncontradaException implements Exception {
+  CompraNoEncontradaException(this.compraId);
+
+  final int compraId;
+
+  @override
+  String toString() => 'No existe una compra con id $compraId';
+}
+
+class CompraNoCancelableException implements Exception {
+  CompraNoCancelableException(this.compraId, this.estadoActual);
+
+  final int compraId;
+  final String estadoActual;
+
+  @override
+  String toString() =>
+      'La compra $compraId no se puede cancelar (estado actual: $estadoActual)';
+}
+
+class StockInsuficienteParaCancelarException implements Exception {
+  StockInsuficienteParaCancelarException({
+    required this.productoId,
+    required this.aRevertir,
+    required this.disponible,
+  });
+
+  final int productoId;
+  final int aRevertir;
+  final int disponible;
+
+  @override
+  String toString() =>
+      'No se puede cancelar: el producto $productoId necesita revertir $aRevertir '
+      'unidades pero solo hay $disponible en stock (ya se vendió parte de esta compra)';
+}
+
 class ItemCompra {
   const ItemCompra({
     required this.productoId,
@@ -80,9 +117,72 @@ class CompraRepository {
     });
   }
 
+  /// Historial de compras, más recientes primero.
+  Stream<List<CompraData>> observarCompras() {
+    return (_db.select(_db.compra)..orderBy([
+          (c) => OrderingTerm.desc(c.fecha),
+          (c) => OrderingTerm.desc(c.id),
+        ]))
+        .watch();
+  }
+
   Future<List<DetalleCompraData>> listarDetalle(int compraId) {
     return (_db.select(
       _db.detalleCompra,
     )..where((d) => d.compraId.equals(compraId))).get();
+  }
+
+  /// Cancela una compra COMPLETADA revirtiendo el 100% de cada línea
+  /// (no existe `devolucion` de compra, así que no hay "cantidad
+  /// activa" que calcular: todo lo comprado se revierte). Se valida
+  /// primero que quede stock suficiente de cada producto — si ya se
+  /// vendió parte de lo comprado, la cancelación se rechaza con un
+  /// mensaje explicable en vez de dejar que el CHECK de
+  /// `inventario_saldo` la rechace con un error genérico.
+  Future<void> cancelarCompra({required int compraId, required int usuarioId}) {
+    return _db.transaction(() async {
+      final compra = await (_db.select(
+        _db.compra,
+      )..where((c) => c.id.equals(compraId))).getSingleOrNull();
+      if (compra == null) throw CompraNoEncontradaException(compraId);
+      if (compra.estado != 'COMPLETADA') {
+        throw CompraNoCancelableException(compraId, compra.estado);
+      }
+
+      final detalles = await listarDetalle(compraId);
+
+      for (final detalle in detalles) {
+        final saldo = await (_db.select(
+          _db.inventarioSaldo,
+        )..where((s) => s.productoId.equals(detalle.productoId))).getSingleOrNull();
+        final disponible = saldo?.cantidadActual ?? 0;
+        if (detalle.cantidad > disponible) {
+          throw StockInsuficienteParaCancelarException(
+            productoId: detalle.productoId,
+            aRevertir: detalle.cantidad,
+            disponible: disponible,
+          );
+        }
+      }
+
+      await (_db.update(
+        _db.compra,
+      )..where((c) => c.id.equals(compraId))).write(
+        const CompraCompanion(estado: Value('CANCELADA')),
+      );
+
+      for (final detalle in detalles) {
+        await _db.into(_db.movimientoInventario).insert(
+          MovimientoInventarioCompanion.insert(
+            productoId: detalle.productoId,
+            tipo: 'CANCELACION',
+            cantidad: -detalle.cantidad,
+            referenciaTipo: const Value('CANCELACION_COMPRA'),
+            referenciaId: Value(compraId),
+            usuarioId: usuarioId,
+          ),
+        );
+      }
+    });
   }
 }
