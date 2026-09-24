@@ -3,16 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
 import '../../../database/app_database.dart';
+import 'client_detail_screen.dart';
 
 final _clientesActivosProvider = FutureProvider<List<ClienteData>>(
   (ref) => ref.watch(clienteRepositoryProvider).listarActivos(),
 );
 
-/// Catálogo de clientes: alta y listado. La resolución de envases
-/// prestados/depósitos pendientes por cliente (fuera del contexto de una
-/// venta reciente) queda como extensión futura — ver riesgo M-3 de la
-/// arquitectura aprobada, que requiere una consulta de agregación por
-/// cliente que `CuentasQueries` todavía no expone.
+/// Catálogo de clientes: alta y listado. Cada cliente abre su ficha
+/// (`ClientDetailScreen`) con sus envases prestados y depósitos
+/// pendientes, sin importar de qué venta vinieron.
 class ClientListScreen extends ConsumerWidget {
   const ClientListScreen({super.key});
 
@@ -23,6 +22,7 @@ class ClientListScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Clientes')),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'clientes_fab',
         onPressed: () => _abrirFormularioNuevoCliente(context, ref),
         icon: const Icon(Icons.add),
         label: const Text('Nuevo cliente'),
@@ -41,6 +41,9 @@ class ClientListScreen extends ConsumerWidget {
                 leading: const Icon(Icons.person_outline),
                 title: Text(cliente.nombre),
                 subtitle: cliente.telefono != null ? Text(cliente.telefono!) : null,
+                onTap: () => Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => ClientDetailScreen(cliente: cliente))),
               );
             },
           );

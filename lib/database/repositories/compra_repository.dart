@@ -44,13 +44,21 @@ class ItemCompra {
     required this.productoId,
     required this.cantidad,
     required this.costoUnitarioCentavos,
-  });
+    int? subtotalCentavos,
+  }) : _subtotalCentavosOverride = subtotalCentavos;
 
   final int productoId;
   final int cantidad;
   final int costoUnitarioCentavos;
 
-  int get subtotalCentavos => cantidad * costoUnitarioCentavos;
+  /// Para productos por pieza, el subtotal es `cantidad * costoUnitario`
+  /// (comportamiento por defecto). Para productos por peso, `cantidad`
+  /// son gramos y `costoUnitarioCentavos` es solo el costo de referencia
+  /// por kilogramo — igual que en `ItemVenta`, el llamador debe pasar el
+  /// subtotal ya calculado correctamente (ver `core/quantity.dart`).
+  final int? _subtotalCentavosOverride;
+
+  int get subtotalCentavos => _subtotalCentavosOverride ?? cantidad * costoUnitarioCentavos;
 }
 
 class CompraRepository {

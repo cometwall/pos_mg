@@ -19,6 +19,7 @@ class ComprasScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Compras')),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'compras_fab',
         onPressed: () => Navigator.of(
           context,
         ).push(MaterialPageRoute(builder: (_) => const NewCompraScreen())),

@@ -8,6 +8,8 @@ import 'package:pos_mg/app/session_providers.dart';
 import 'package:pos_mg/database/app_database.dart';
 import 'package:pos_mg/features/compras/controllers/compra_controllers.dart';
 import 'package:pos_mg/features/historial/controllers/sale_history_controllers.dart';
+import 'package:pos_mg/features/productos/screens/product_list_screen.dart';
+import 'package:pos_mg/features/ventas/controllers/sale_cart_controller.dart';
 
 void main() {
   testWidgets('El shell de navegación muestra Ventas por defecto', (
@@ -28,6 +30,8 @@ void main() {
           sesionCajaAbiertaProvider.overrideWith((ref) => Stream.value(null)),
           ventasHistorialProvider.overrideWith((ref) => Stream.value(const [])),
           comprasHistorialProvider.overrideWith((ref) => Stream.value(const [])),
+          resultadosBusquedaProductoProvider.overrideWith((ref) => Stream.value(const [])),
+          productosActivosProvider.overrideWith((ref) => Stream.value(const [])),
         ],
         child: const PosApp(),
       ),

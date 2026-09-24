@@ -49,7 +49,15 @@ class SaleCheckoutService {
         ItemVenta(
           productoId: linea.productoId,
           cantidad: linea.cantidad,
-          precioUnitarioCentavos: linea.precioUnitarioCentavos,
+          // Para peso, `cantidad` son gramos: `precioUnitarioCentavos` y
+          // `costoUnitarioCentavos` deben guardarse por gramo (no por
+          // kilogramo) para que devoluciones/cancelaciones futuras —que
+          // multiplican cantidad activa * precio guardado— den el monto
+          // correcto. El subtotal real de la venta no depende de esto:
+          // va aparte, ya calculado con precisión, en `subtotalCentavos`.
+          precioUnitarioCentavos: linea.esPorPeso
+              ? linea.precioUnitarioCentavos ~/ 1000
+              : linea.precioUnitarioCentavos,
           costoUnitarioCentavos: linea.esPorPeso
               ? (linea.costoReferenciaCentavos ?? 0) ~/ 1000
               : (linea.costoReferenciaCentavos ?? 0),

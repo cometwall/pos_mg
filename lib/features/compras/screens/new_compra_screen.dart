@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/providers.dart';
 import '../../../app/session_providers.dart';
 import '../../../core/money.dart';
+import '../../../core/quantity.dart';
 import '../../../database/app_database.dart';
 import '../../../database/repositories/compra_repository.dart';
 import '../../../shared/widgets/money_display.dart';
@@ -13,16 +14,26 @@ class _ItemCompraUi {
   const _ItemCompraUi({
     required this.productoId,
     required this.nombre,
+    required this.esPorPeso,
     required this.cantidad,
     required this.costoUnitarioCentavos,
   });
 
   final int productoId;
   final String nombre;
+
+  /// `false` = pieza (cantidad en piezas). `true` = peso (cantidad en
+  /// GRAMOS; `costoUnitarioCentavos` es el costo por KILOGRAMO que
+  /// escribió el cajero, no por gramo — igual convención que
+  /// `SaleCartLine` en Ventas).
+  final bool esPorPeso;
+
   final int cantidad;
   final int costoUnitarioCentavos;
 
-  int get subtotalCentavos => cantidad * costoUnitarioCentavos;
+  int get subtotalCentavos => esPorPeso
+      ? subtotalPorPeso(precioPorKiloCentavos: costoUnitarioCentavos, gramos: cantidad)
+      : cantidad * costoUnitarioCentavos;
 }
 
 /// Alta de una compra a proveedor: cabecera + líneas, todo en una
@@ -95,11 +106,15 @@ class _NewCompraScreenState extends ConsumerState<NewCompraScreen> {
                       itemCount: _items.length,
                       itemBuilder: (context, index) {
                         final item = _items[index];
+                        final cantidadTexto = item.esPorPeso
+                            ? '${gramosAKilogramos(item.cantidad).toStringAsFixed(3)} kg'
+                            : '${item.cantidad}';
+                        final costoTexto = item.esPorPeso
+                            ? '${formatCentavos(item.costoUnitarioCentavos)}/kg'
+                            : formatCentavos(item.costoUnitarioCentavos);
                         return ListTile(
                           title: Text(item.nombre),
-                          subtitle: Text(
-                            '${item.cantidad} x ${formatCentavos(item.costoUnitarioCentavos)}',
-                          ),
+                          subtitle: Text('$cantidadTexto x $costoTexto'),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -197,35 +212,48 @@ class _NewCompraScreenState extends ConsumerState<NewCompraScreen> {
                     ),
                     SizedBox(
                       height: 160,
-                      child: FutureBuilder<List<ProductoData>>(
-                        future: ref.read(productoRepositoryProvider).buscar(busquedaController.text),
-                        builder: (context, snapshot) {
-                          final productos = snapshot.data ?? const [];
-                          return ListView.builder(
-                            itemCount: productos.length,
-                            itemBuilder: (context, index) {
-                              final producto = productos[index];
-                              return RadioListTile<ProductoData>(
-                                dense: true,
-                                title: Text(producto.nombre),
-                                value: producto,
-                                groupValue: seleccionado,
-                                onChanged: (valor) => setState(() => seleccionado = valor),
-                              );
-                            },
-                          );
-                        },
+                      child: RadioGroup<ProductoData>(
+                        groupValue: seleccionado,
+                        onChanged: (valor) => setState(() => seleccionado = valor),
+                        child: FutureBuilder<List<ProductoData>>(
+                          future: ref
+                              .read(productoRepositoryProvider)
+                              .buscar(busquedaController.text),
+                          builder: (context, snapshot) {
+                            final productos = snapshot.data ?? const [];
+                            return ListView.builder(
+                              itemCount: productos.length,
+                              itemBuilder: (context, index) {
+                                final producto = productos[index];
+                                return RadioListTile<ProductoData>(
+                                  dense: true,
+                                  title: Text(producto.nombre),
+                                  value: producto,
+                                );
+                              },
+                            );
+                          },
+                        ),
                       ),
                     ),
                     TextField(
                       controller: cantidadController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(labelText: 'Cantidad'),
+                      keyboardType: seleccionado?.unidad == 'peso'
+                          ? const TextInputType.numberWithOptions(decimal: true)
+                          : TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: seleccionado?.unidad == 'peso' ? 'Cantidad (kg)' : 'Cantidad (piezas)',
+                      ),
                     ),
                     TextField(
                       controller: costoController,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Costo unitario', prefixText: r'$'),
+                      decoration: InputDecoration(
+                        labelText: seleccionado?.unidad == 'peso'
+                            ? 'Costo por kilogramo'
+                            : 'Costo unitario',
+                        prefixText: r'$',
+                      ),
                     ),
                   ],
                 ),
@@ -247,8 +275,17 @@ class _NewCompraScreenState extends ConsumerState<NewCompraScreen> {
     );
 
     if (agregar != true || seleccionado == null) return;
-    final cantidad = int.tryParse(cantidadController.text);
+    final esPorPeso = seleccionado!.unidad == 'peso';
     final costo = parseCentavosDesdeTexto(costoController.text);
+
+    int? cantidad;
+    if (esPorPeso) {
+      final kilos = double.tryParse(cantidadController.text.replaceAll(',', '.'));
+      if (kilos != null && kilos > 0) cantidad = kilogramosAGramos(kilos);
+    } else {
+      cantidad = int.tryParse(cantidadController.text);
+    }
+
     if (cantidad == null || cantidad <= 0 || costo == null) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -263,7 +300,8 @@ class _NewCompraScreenState extends ConsumerState<NewCompraScreen> {
         _ItemCompraUi(
           productoId: seleccionado!.id,
           nombre: seleccionado!.nombre,
-          cantidad: cantidad,
+          esPorPeso: esPorPeso,
+          cantidad: cantidad!,
           costoUnitarioCentavos: costo,
         ),
       );
@@ -289,7 +327,14 @@ class _NewCompraScreenState extends ConsumerState<NewCompraScreen> {
             ItemCompra(
               productoId: item.productoId,
               cantidad: item.cantidad,
-              costoUnitarioCentavos: item.costoUnitarioCentavos,
+              // Igual convención que en Ventas: para peso, `cantidad` son
+              // gramos, así que el costo guardado por unidad debe ser por
+              // gramo (no por kilogramo); el subtotal real ya viene
+              // calculado con precisión aparte.
+              costoUnitarioCentavos: item.esPorPeso
+                  ? item.costoUnitarioCentavos ~/ 1000
+                  : item.costoUnitarioCentavos,
+              subtotalCentavos: item.subtotalCentavos,
             ),
         ],
       );

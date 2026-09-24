@@ -13,7 +13,13 @@ import '../features/ventas/screens/sales_screen.dart';
 /// POS), más las secciones secundarias ordenadas por frecuencia de uso
 /// real. `IndexedStack` mantiene vivo el estado de cada sección al
 /// cambiar entre ellas (p. ej. no se pierde el carrito de Ventas si el
-/// cajero revisa Historial a media venta).
+/// cajero revisa Historial a media venta) — pero como consecuencia,
+/// TODAS las secciones están montadas en todo momento (no solo la
+/// visible). Por eso cualquier `FloatingActionButton` en una pantalla de
+/// sección necesita su propio `heroTag` explícito: sin él, Flutter les
+/// asigna a todos el mismo tag por defecto y la animación Hero de
+/// cualquier navegación revienta con "multiple heroes share the same
+/// tag" en cuanto hay más de un FAB en el árbol simultáneamente.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 

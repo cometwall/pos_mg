@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/money.dart';
 import '../../../core/quantity.dart';
 import '../../../database/app_database.dart';
+import '../../productos/controllers/producto_stock_provider.dart';
 import '../controllers/sale_cart_controller.dart';
 
 /// Buscador de producto + resultados en vivo. Con texto exacto de código
@@ -127,7 +128,7 @@ class _ProductSearchState extends ConsumerState<ProductSearch> {
               return GridView.builder(
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 220,
-                  mainAxisExtent: 88,
+                  mainAxisExtent: 104,
                   crossAxisSpacing: 8,
                   mainAxisSpacing: 8,
                 ),
@@ -150,17 +151,20 @@ class _ProductSearchState extends ConsumerState<ProductSearch> {
   }
 }
 
-class _ProductoCard extends StatelessWidget {
+class _ProductoCard extends ConsumerWidget {
   const _ProductoCard({required this.producto, required this.onTap});
 
   final ProductoData producto;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    final precioTexto = producto.unidad == 'peso'
+  Widget build(BuildContext context, WidgetRef ref) {
+    final esPorPeso = producto.unidad == 'peso';
+    final precioTexto = esPorPeso
         ? '${formatCentavos(producto.precioVentaCentavos)}/kg'
         : formatCentavos(producto.precioVentaCentavos);
+    final saldoAsync = ref.watch(productoStockProvider(producto.id));
+    final sinStock = saldoAsync.value == 0;
 
     return Card(
       child: InkWell(
@@ -179,6 +183,18 @@ class _ProductoCard extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               Text(precioTexto, style: const TextStyle(color: Colors.black54)),
+              Text(
+                saldoAsync.when(
+                  data: (saldo) => 'Stock: ${formatearStock(esPorPeso: esPorPeso, cantidad: saldo)}',
+                  loading: () => 'Stock: …',
+                  error: (_, _) => 'Stock: ?',
+                ),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: sinStock ? Colors.red.shade600 : Colors.black45,
+                  fontWeight: sinStock ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
             ],
           ),
         ),

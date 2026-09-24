@@ -2,6 +2,20 @@ import 'package:drift/drift.dart';
 
 import '../app_database.dart';
 
+/// Un pendiente de préstamo o depósito de envase agrupado por venta y
+/// tipo de envase, para mostrarlo en la ficha de un cliente.
+class PendienteEnvaseCliente {
+  const PendienteEnvaseCliente({
+    required this.ventaId,
+    required this.tipoEnvaseId,
+    required this.cantidadPendiente,
+  });
+
+  final int ventaId;
+  final int tipoEnvaseId;
+  final int cantidadPendiente;
+}
+
 /// Las "funciones clave" de saldo pendiente que varios repositories
 /// necesitan (venta, compra, devolución, envase). No tiene estado propio:
 /// solo agrupa consultas de solo lectura sobre el mismo [AppDatabase] que
@@ -100,5 +114,64 @@ class CuentasQueries {
       readsFrom: {_db.envaseInventarioMov},
     ).getSingle();
     return fila.read<int>('total');
+  }
+
+  /// Envases prestados pendientes de un cliente, sumados en TODA su
+  /// historia (no una sola venta), agrupados por venta + tipo de envase.
+  /// Excluye movimientos sin `venta_id` (ajustes manuales sin venta
+  /// asociada): `EnvaseRepository.devolverEnvasePrestado`/
+  /// `pagarEnvasePrestado` necesitan una venta original contra la cual
+  /// liquidar, así que esos ajustes sueltos quedan fuera de esta vista
+  /// a propósito, no por descuido.
+  Future<List<PendienteEnvaseCliente>> envasesPendientesPorCliente(int clienteId) async {
+    final filas = await _db.customSelect(
+      '''
+      SELECT venta_id, tipo_envase_id,
+             SUM(CASE tipo WHEN 'PRESTAMO' THEN cantidad ELSE -cantidad END) AS pendiente
+      FROM cuenta_envase_mov
+      WHERE cliente_id = ? AND venta_id IS NOT NULL
+      GROUP BY venta_id, tipo_envase_id
+      HAVING pendiente > 0
+      ''',
+      variables: [Variable.withInt(clienteId)],
+      readsFrom: {_db.cuentaEnvaseMov},
+    ).get();
+    return [
+      for (final fila in filas)
+        PendienteEnvaseCliente(
+          ventaId: fila.read<int>('venta_id'),
+          tipoEnvaseId: fila.read<int>('tipo_envase_id'),
+          cantidadPendiente: fila.read<int>('pendiente'),
+        ),
+    ];
+  }
+
+  /// Depósitos de envase pendientes de devolver a un cliente, sumados en
+  /// toda su historia. A diferencia de `cuenta_envase_mov`,
+  /// `cuenta_deposito_envase_mov` no tiene `cliente_id` propio, así que
+  /// se llega al cliente vía la venta (`venta_id` en esa tabla nunca es
+  /// nulo, a diferencia de los préstamos).
+  Future<List<PendienteEnvaseCliente>> depositosPendientesPorCliente(int clienteId) async {
+    final filas = await _db.customSelect(
+      '''
+      SELECT d.venta_id AS venta_id, d.tipo_envase_id AS tipo_envase_id,
+             SUM(CASE d.tipo WHEN 'COBRADO' THEN d.cantidad ELSE -d.cantidad END) AS pendiente
+      FROM cuenta_deposito_envase_mov d
+      JOIN venta v ON v.id = d.venta_id
+      WHERE v.cliente_id = ?
+      GROUP BY d.venta_id, d.tipo_envase_id
+      HAVING pendiente > 0
+      ''',
+      variables: [Variable.withInt(clienteId)],
+      readsFrom: {_db.cuentaDepositoEnvaseMov, _db.venta},
+    ).get();
+    return [
+      for (final fila in filas)
+        PendienteEnvaseCliente(
+          ventaId: fila.read<int>('venta_id'),
+          tipoEnvaseId: fila.read<int>('tipo_envase_id'),
+          cantidadPendiente: fila.read<int>('pendiente'),
+        ),
+    ];
   }
 }

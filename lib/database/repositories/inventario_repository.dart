@@ -17,6 +17,17 @@ class InventarioRepository {
     return fila?.cantidadActual ?? 0;
   }
 
+  /// Versión reactiva de [consultarSaldo]: emite un nuevo valor cada vez
+  /// que `inventario_saldo` cambia para ese producto (venta, compra,
+  /// cancelación, devolución o ajuste manual, sin importar desde dónde
+  /// se haya originado) — la UI que la observe no necesita invalidarse
+  /// manualmente después de cada acción que mueva inventario.
+  Stream<int> observarSaldo(int productoId) {
+    return (_db.select(_db.inventarioSaldo)..where((s) => s.productoId.equals(productoId)))
+        .watchSingleOrNull()
+        .map((fila) => fila?.cantidadActual ?? 0);
+  }
+
   /// Inserta un ajuste manual de inventario. [cantidad] es el delta con
   /// signo (positivo suma stock, negativo lo resta). Un ajuste que
   /// dejara el saldo negativo lo rechaza la base (CHECK de

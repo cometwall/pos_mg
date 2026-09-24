@@ -29,3 +29,12 @@ int subtotalPorPieza({
 }) {
   return precioUnitarioCentavos * piezas;
 }
+
+/// Formatea una cantidad de `inventario_saldo` (gramos o piezas según
+/// `esPorPeso`) para mostrarla en la UI, ej. "2.500 kg" o "12 pzas".
+String formatearStock({required bool esPorPeso, required int cantidad}) {
+  if (esPorPeso) {
+    return '${gramosAKilogramos(cantidad).toStringAsFixed(3)} kg';
+  }
+  return '$cantidad ${cantidad == 1 ? 'pieza' : 'pzas'}';
+}

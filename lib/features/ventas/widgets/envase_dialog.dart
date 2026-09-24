@@ -6,13 +6,11 @@ import '../../../core/money.dart';
 import '../../../database/app_database.dart';
 import '../../../database/repositories/envase_repository.dart';
 
-enum _Opcion { ninguno, deposito, prestamo }
+enum _Opcion { ninguno, deposito, prestamo, entregado, recibido }
 
-/// Configura el envase (depósito cobrado o préstamo sin depósito) de una
-/// línea del carrito. Solo se ofrece para productos con `tipoEnvaseId`.
-/// "Entregado"/"Recibido" (intercambio de envase en el momento) quedan
-/// fuera de esta primera versión de UI — se pueden agregar más adelante
-/// sin cambiar el modelo, ya que el repositorio ya los soporta.
+/// Configura la operación de envase (depósito cobrado, préstamo sin
+/// depósito, o intercambio inmediato en el mostrador) de una línea del
+/// carrito. Solo se ofrece para productos con `tipoEnvaseId`.
 class EnvaseDialog extends ConsumerStatefulWidget {
   const EnvaseDialog({
     super.key,
@@ -71,7 +69,9 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
     _opcion = switch (inicial?.tipo) {
       TipoOperacionEnvase.depositoCobrado => _Opcion.deposito,
       TipoOperacionEnvase.prestado => _Opcion.prestamo,
-      _ => _Opcion.ninguno,
+      TipoOperacionEnvase.entregado => _Opcion.entregado,
+      TipoOperacionEnvase.recibido => _Opcion.recibido,
+      null => _Opcion.ninguno,
     };
     _cantidadController = TextEditingController(
       text: '${inicial?.cantidad ?? widget.cantidadSugerida}',
@@ -102,7 +102,10 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
 
         return AlertDialog(
           title: Text('Envase${tipoEnvase != null ? ' · ${tipoEnvase.nombre}' : ''}'),
-          content: Column(
+          content: RadioGroup<_Opcion>(
+            groupValue: _opcion,
+            onChanged: (valor) => setState(() => _opcion = valor!),
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -110,15 +113,11 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
                 dense: true,
                 title: const Text('Sin operación de envase'),
                 value: _Opcion.ninguno,
-                groupValue: _opcion,
-                onChanged: (valor) => setState(() => _opcion = valor!),
               ),
               RadioListTile<_Opcion>(
                 dense: true,
                 title: const Text('Cobrar depósito (retornable)'),
                 value: _Opcion.deposito,
-                groupValue: _opcion,
-                onChanged: (valor) => setState(() => _opcion = valor!),
               ),
               RadioListTile<_Opcion>(
                 dense: true,
@@ -127,8 +126,18 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
                     ? const Text('Requiere asociar un cliente a la venta')
                     : null,
                 value: _Opcion.prestamo,
-                groupValue: _opcion,
-                onChanged: widget.hayCliente ? (valor) => setState(() => _opcion = valor!) : null,
+                enabled: widget.hayCliente,
+              ),
+              RadioListTile<_Opcion>(
+                dense: true,
+                title: const Text('Entregar envase'),
+                subtitle: const Text('Sale sin depósito ni préstamo (intercambio en el momento)'),
+                value: _Opcion.entregado,
+              ),
+              RadioListTile<_Opcion>(
+                dense: true,
+                title: const Text('Recibir envase vacío del cliente'),
+                value: _Opcion.recibido,
               ),
               if (_opcion != _Opcion.ninguno) ...[
                 const SizedBox(height: 8),
@@ -148,6 +157,7 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
                   ),
               ],
             ],
+            ),
           ),
           actions: [
             TextButton(
@@ -196,11 +206,18 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
       return;
     }
 
+    final tipo = switch (_opcion) {
+      _Opcion.prestamo => TipoOperacionEnvase.prestado,
+      _Opcion.entregado => TipoOperacionEnvase.entregado,
+      _Opcion.recibido => TipoOperacionEnvase.recibido,
+      _Opcion.ninguno || _Opcion.deposito => throw StateError('Caso ya manejado arriba'),
+    };
+
     Navigator.of(context).pop(
       _Resultado(
         OperacionEnvaseVenta(
           tipoEnvaseId: widget.tipoEnvaseId,
-          tipo: TipoOperacionEnvase.prestado,
+          tipo: tipo,
           cantidad: cantidad,
         ),
       ),

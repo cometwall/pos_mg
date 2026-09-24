@@ -136,7 +136,12 @@ final busquedaProductoProvider = NotifierProvider<BusquedaProductoController, St
 /// Con texto vacío, muestra el catálogo activo completo — es la
 /// aproximación más simple a la "grid de productos frecuentes" del
 /// diseño mientras no exista conteo de frecuencia de venta.
-final resultadosBusquedaProductoProvider = FutureProvider<List<ProductoData>>((ref) {
+///
+/// Es un `StreamProvider` (no `FutureProvider`) a propósito: usa
+/// `ProductoRepository.observarBusqueda`, reactivo a cualquier alta o
+/// edición de producto — sin esto, un precio o nombre editado en
+/// Productos se seguía viendo desactualizado en la búsqueda de Ventas.
+final resultadosBusquedaProductoProvider = StreamProvider<List<ProductoData>>((ref) {
   final query = ref.watch(busquedaProductoProvider);
-  return ref.watch(productoRepositoryProvider).buscar(query);
+  return ref.watch(productoRepositoryProvider).observarBusqueda(query);
 });

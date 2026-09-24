@@ -238,19 +238,23 @@ class _DetalleLineaTile extends ConsumerWidget {
                     decoration: const InputDecoration(labelText: 'Cantidad a devolver'),
                   ),
                   const SizedBox(height: 12),
-                  RadioListTile<CondicionDevolucion>(
-                    dense: true,
-                    title: const Text('Bueno (reingresa a inventario)'),
-                    value: CondicionDevolucion.bueno,
+                  RadioGroup<CondicionDevolucion>(
                     groupValue: condicion,
                     onChanged: (valor) => setState(() => condicion = valor!),
-                  ),
-                  RadioListTile<CondicionDevolucion>(
-                    dense: true,
-                    title: const Text('Dañado (no reingresa)'),
-                    value: CondicionDevolucion.danado,
-                    groupValue: condicion,
-                    onChanged: (valor) => setState(() => condicion = valor!),
+                    child: Column(
+                      children: [
+                        RadioListTile<CondicionDevolucion>(
+                          dense: true,
+                          title: const Text('Bueno (reingresa a inventario)'),
+                          value: CondicionDevolucion.bueno,
+                        ),
+                        RadioListTile<CondicionDevolucion>(
+                          dense: true,
+                          title: const Text('Dañado (no reingresa)'),
+                          value: CondicionDevolucion.danado,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
