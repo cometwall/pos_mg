@@ -5,6 +5,7 @@ import '../features/clientes/screens/client_list_screen.dart';
 import '../features/compras/screens/compras_screen.dart';
 import '../features/configuracion/screens/configuracion_screen.dart';
 import '../features/historial/screens/sales_history_screen.dart';
+import '../features/inventario/screens/envase_stock_screen.dart';
 import '../features/productos/screens/product_list_screen.dart';
 import '../features/ventas/screens/sales_screen.dart';
 
@@ -60,6 +61,12 @@ class _AppShellState extends State<AppShell> {
       icono: Icons.people_outline,
       iconoSeleccionado: Icons.people,
       screen: ClientListScreen(),
+    ),
+    _SeccionNav(
+      etiqueta: 'Inventario',
+      icono: Icons.inventory_outlined,
+      iconoSeleccionado: Icons.inventory,
+      screen: EnvaseStockScreen(),
     ),
     _SeccionNav(
       etiqueta: 'Compras',

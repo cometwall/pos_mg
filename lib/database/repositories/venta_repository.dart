@@ -167,13 +167,18 @@ class VentaRepository {
         'Se requiere una sesión de caja abierta para cobrar en efectivo',
       );
     }
-    if (operacionesEnvase.any((o) => o.tipo == TipoOperacionEnvase.prestado) &&
-        clienteId == null) {
-      throw EnvasePrestadoSinClienteException();
-    }
     final tieneDeposito = operacionesEnvase.any(
       (o) => o.tipo == TipoOperacionEnvase.depositoCobrado,
     );
+    // Préstamo y depósito dejan ambos un pendiente ligado a la venta que
+    // solo se puede liquidar desde la ficha de un cliente (ver
+    // EnvaseSinClienteException) — sin cliente, ese pendiente queda
+    // atrapado sin forma de recuperarse desde la app.
+    if ((tieneDeposito ||
+            operacionesEnvase.any((o) => o.tipo == TipoOperacionEnvase.prestado)) &&
+        clienteId == null) {
+      throw EnvaseSinClienteException();
+    }
     if (tieneDeposito) {
       if (cajaSesionId == null) {
         throw ArgumentError.value(
@@ -529,10 +534,14 @@ class VentaRepository {
     required int? cajaSesionId,
   }) async {
     for (final op in operaciones) {
+      // "Entregado" no cuenta como salida física: el cliente trae su
+      // propio envase vacío a cambio del lleno que se lleva, así que el
+      // stock de envases de la tienda no cambia (ni sale ni entra) — a
+      // diferencia de depósito/préstamo, donde el envase que sale es de
+      // la tienda.
       final esSalidaFisica =
           op.tipo == TipoOperacionEnvase.depositoCobrado ||
-          op.tipo == TipoOperacionEnvase.prestado ||
-          op.tipo == TipoOperacionEnvase.entregado;
+          op.tipo == TipoOperacionEnvase.prestado;
 
       if (esSalidaFisica) {
         final saldoFisico = await _cuentas.saldoFisicoEnvase(op.tipoEnvaseId);
@@ -615,16 +624,12 @@ class VentaRepository {
           );
 
         case TipoOperacionEnvase.entregado:
-          await _db.into(_db.envaseInventarioMov).insert(
-            EnvaseInventarioMovCompanion.insert(
-              tipoEnvaseId: op.tipoEnvaseId,
-              tipo: 'SALIDA_PRESTAMO',
-              cantidad: -op.cantidad,
-              referenciaTipo: const Value('VENTA'),
-              referenciaId: Value(ventaId),
-              usuarioId: usuarioId,
-            ),
-          );
+          // Sin movimiento de inventario físico: el envase que sale es
+          // el mismo (o equivalente) que el cliente trae vacío, así que
+          // el stock de la tienda no se mueve. La fila de
+          // `operacion_envase` de arriba ya deja el registro de que
+          // ocurrió, para historial/reportes.
+          break;
 
         case TipoOperacionEnvase.recibido:
           await _db.into(_db.envaseInventarioMov).insert(

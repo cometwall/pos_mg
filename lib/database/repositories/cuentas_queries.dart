@@ -107,13 +107,30 @@ class CuentasQueries {
   /// existe una tabla materializada de saldo de envase (a diferencia de
   /// inventario_saldo para producto), así que esto recorre el historial
   /// completo cada vez.
-  Future<int> saldoFisicoEnvase(int tipoEnvaseId) async {
-    final fila = await _db.customSelect(
+  Future<int> saldoFisicoEnvase(int tipoEnvaseId) => _selectSaldoFisicoEnvase(tipoEnvaseId).getSingle().then(
+    (fila) => fila.read<int>('total'),
+  );
+
+  /// Versión reactiva de [saldoFisicoEnvase]: emite un nuevo valor cada
+  /// vez que `envase_inventario_mov` cambia para ese tipo de envase, sin
+  /// importar desde dónde se haya originado (venta, devolución, compra a
+  /// proveedor/cliente, cancelación) — igual que
+  /// `InventarioRepository.observarSaldo` para producto, necesario porque
+  /// varias pantallas mantienen esta consulta montada a la vez (p. ej.
+  /// Ventas e Inventario en el mismo `IndexedStack`) y una versión no
+  /// reactiva se queda desactualizada en las que no dispararon el cambio.
+  Stream<int> observarSaldoFisicoEnvase(int tipoEnvaseId) {
+    return _selectSaldoFisicoEnvase(
+      tipoEnvaseId,
+    ).watchSingle().map((fila) => fila.read<int>('total'));
+  }
+
+  Selectable<QueryRow> _selectSaldoFisicoEnvase(int tipoEnvaseId) {
+    return _db.customSelect(
       'SELECT COALESCE(SUM(cantidad), 0) AS total FROM envase_inventario_mov WHERE tipo_envase_id = ?',
       variables: [Variable.withInt(tipoEnvaseId)],
       readsFrom: {_db.envaseInventarioMov},
-    ).getSingle();
-    return fila.read<int>('total');
+    );
   }
 
   /// Envases prestados pendientes de un cliente, sumados en TODA su

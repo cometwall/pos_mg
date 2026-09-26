@@ -13,7 +13,7 @@ class SaleCartLine {
     required this.precioUnitarioCentavos,
     this.costoReferenciaCentavos,
     this.tipoEnvaseId,
-    this.operacionEnvase,
+    this.operacionesEnvase = const [],
   });
 
   final int productoId;
@@ -29,10 +29,12 @@ class SaleCartLine {
   final int? costoReferenciaCentavos;
   final int? tipoEnvaseId;
 
-  /// Depósito cobrado o préstamo de envase asociado a esta línea, si el
-  /// cajero lo configuró. `null` = sin operación de envase para esta
-  /// línea (el caso más común).
-  final OperacionEnvaseVenta? operacionEnvase;
+  /// Operaciones de envase asociadas a esta línea, si el cajero las
+  /// configuró — puede haber varias combinadas para la misma línea (ej.
+  /// 2 envases entregados en intercambio + 1 con depósito cobrado, para
+  /// cubrir 3 unidades del producto). Lista vacía = sin operación de
+  /// envase configurada (el caso más común).
+  final List<OperacionEnvaseVenta> operacionesEnvase;
 
   int get subtotalCentavos => esPorPeso
       ? subtotalPorPeso(precioPorKiloCentavos: precioUnitarioCentavos, gramos: cantidad)
@@ -40,8 +42,7 @@ class SaleCartLine {
 
   SaleCartLine copyWith({
     int? cantidad,
-    OperacionEnvaseVenta? operacionEnvase,
-    bool limpiarOperacionEnvase = false,
+    List<OperacionEnvaseVenta>? operacionesEnvase,
   }) {
     return SaleCartLine(
       productoId: productoId,
@@ -51,7 +52,7 @@ class SaleCartLine {
       precioUnitarioCentavos: precioUnitarioCentavos,
       costoReferenciaCentavos: costoReferenciaCentavos,
       tipoEnvaseId: tipoEnvaseId,
-      operacionEnvase: limpiarOperacionEnvase ? null : (operacionEnvase ?? this.operacionEnvase),
+      operacionesEnvase: operacionesEnvase ?? this.operacionesEnvase,
     );
   }
 }

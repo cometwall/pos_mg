@@ -115,7 +115,8 @@ class _SalesScreenState extends ConsumerState<SalesScreen> {
     final sesion = ref.read(sesionCajaAbiertaProvider).value;
     final cobros = await PaymentDialog.show(
       context,
-      totalCentavos: carrito.subtotalCentavos,
+      productoCentavos: carrito.subtotalCentavos,
+      depositoCentavos: carrito.depositoEnvaseCentavos,
       haySesionCaja: sesion != null,
     );
     if (cobros == null || !mounted) return;
@@ -196,7 +197,8 @@ class _VentaEnProgreso extends ConsumerWidget {
                 const SizedBox(height: 8),
                 SaleSummary(
                   subtotalCentavos: carrito.subtotalCentavos,
-                  totalCentavos: carrito.subtotalCentavos,
+                  depositoEnvaseCentavos: carrito.depositoEnvaseCentavos,
+                  totalCentavos: carrito.subtotalCentavos + carrito.depositoEnvaseCentavos,
                 ),
                 const SizedBox(height: 16),
                 FilledButton(

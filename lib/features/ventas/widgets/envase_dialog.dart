@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
@@ -6,32 +7,38 @@ import '../../../core/money.dart';
 import '../../../database/app_database.dart';
 import '../../../database/repositories/envase_repository.dart';
 
-enum _Opcion { ninguno, deposito, prestamo, entregado, recibido }
-
-/// Configura la operación de envase (depósito cobrado, préstamo sin
-/// depósito, o intercambio inmediato en el mostrador) de una línea del
-/// carrito. Solo se ofrece para productos con `tipoEnvaseId`.
+/// Configura las operaciones de envase de una línea del carrito. A
+/// diferencia de una elección única, las 4 cantidades son independientes
+/// y combinables entre sí — un cliente puede traer 2 envases a
+/// intercambiar y dejar depósito por 1 más, o traer 1 y pedir que se le
+/// preste otro, todo en la misma línea. Solo se ofrece para productos
+/// con `tipoEnvaseId`.
 class EnvaseDialog extends ConsumerStatefulWidget {
   const EnvaseDialog({
     super.key,
     required this.tipoEnvaseId,
     required this.cantidadSugerida,
     required this.hayCliente,
-    this.inicial,
+    this.inicial = const [],
   });
 
   final int tipoEnvaseId;
   final int cantidadSugerida;
   final bool hayCliente;
-  final OperacionEnvaseVenta? inicial;
+  final List<OperacionEnvaseVenta> inicial;
 
-  static Future<void> show(
+  /// Devuelve `true` si el cajero confirmó con "Guardar" (aunque haya
+  /// dejado las 4 cantidades en 0, equivalente a "sin operación de
+  /// envase") y `false` si canceló o cerró el diálogo sin resolverlo —
+  /// distinción que el llamador necesita para decidir si debe revertir
+  /// algo hecho antes de abrir el diálogo (ver `product_search.dart`).
+  static Future<bool> show(
     BuildContext context, {
     required int tipoEnvaseId,
     required int cantidadSugerida,
     required bool hayCliente,
-    OperacionEnvaseVenta? inicial,
-    required void Function(OperacionEnvaseVenta? operacion) onGuardar,
+    List<OperacionEnvaseVenta> inicial = const [],
+    required void Function(List<OperacionEnvaseVenta> operaciones) onGuardar,
   }) {
     return showDialog(
       context: context,
@@ -42,7 +49,11 @@ class EnvaseDialog extends ConsumerStatefulWidget {
         inicial: inicial,
       ),
     ).then((resultado) {
-      if (resultado is _Resultado) onGuardar(resultado.operacion);
+      if (resultado is _Resultado) {
+        onGuardar(resultado.operaciones);
+        return true;
+      }
+      return false;
     });
   }
 
@@ -51,13 +62,15 @@ class EnvaseDialog extends ConsumerStatefulWidget {
 }
 
 class _Resultado {
-  const _Resultado(this.operacion);
-  final OperacionEnvaseVenta? operacion;
+  const _Resultado(this.operaciones);
+  final List<OperacionEnvaseVenta> operaciones;
 }
 
 class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
-  late _Opcion _opcion;
-  late final TextEditingController _cantidadController;
+  late final TextEditingController _depositoController;
+  late final TextEditingController _prestamoController;
+  late final TextEditingController _entregadoController;
+  late final TextEditingController _recibidoController;
   late final TextEditingController _montoController;
   late final Future<TipoEnvaseData?> _tipoEnvaseFuture;
 
@@ -65,30 +78,62 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
   void initState() {
     super.initState();
     _tipoEnvaseFuture = ref.read(tipoEnvaseRepositoryProvider).obtenerPorId(widget.tipoEnvaseId);
-    final inicial = widget.inicial;
-    _opcion = switch (inicial?.tipo) {
-      TipoOperacionEnvase.depositoCobrado => _Opcion.deposito,
-      TipoOperacionEnvase.prestado => _Opcion.prestamo,
-      TipoOperacionEnvase.entregado => _Opcion.entregado,
-      TipoOperacionEnvase.recibido => _Opcion.recibido,
-      null => _Opcion.ninguno,
-    };
-    _cantidadController = TextEditingController(
-      text: '${inicial?.cantidad ?? widget.cantidadSugerida}',
+
+    int cantidadDe(TipoOperacionEnvase tipo) => widget.inicial
+        .where((o) => o.tipo == tipo)
+        .fold(0, (acc, o) => acc + o.cantidad);
+
+    // Sin operaciones previas, se asume el caso más común: intercambio
+    // inmediato en el mostrador, sin depósito ni préstamo.
+    final entregadoInicial = widget.inicial.isEmpty
+        ? widget.cantidadSugerida
+        : cantidadDe(TipoOperacionEnvase.entregado);
+
+    _depositoController = TextEditingController(
+      text: '${cantidadDe(TipoOperacionEnvase.depositoCobrado)}',
     );
+    _prestamoController = TextEditingController(
+      text: '${cantidadDe(TipoOperacionEnvase.prestado)}',
+    );
+    _entregadoController = TextEditingController(text: '$entregadoInicial');
+    _recibidoController = TextEditingController(
+      text: '${cantidadDe(TipoOperacionEnvase.recibido)}',
+    );
+
+    final montoExistente = widget.inicial
+        .where((o) => o.tipo == TipoOperacionEnvase.depositoCobrado)
+        .map((o) => o.montoUnitarioCentavos)
+        .whereType<int>()
+        .firstOrNull;
     _montoController = TextEditingController(
-      text: inicial?.montoUnitarioCentavos != null
-          ? (inicial!.montoUnitarioCentavos! / 100).toStringAsFixed(2)
-          : '',
+      text: montoExistente != null ? (montoExistente / 100).toStringAsFixed(2) : '',
     );
   }
 
   @override
   void dispose() {
-    _cantidadController.dispose();
+    _depositoController.dispose();
+    _prestamoController.dispose();
+    _entregadoController.dispose();
+    _recibidoController.dispose();
     _montoController.dispose();
     super.dispose();
   }
+
+  /// Vacío = "no seleccionado" (0, no es error). Texto inválido o
+  /// negativo = `null` (error real). `TextInputType.number` solo sugiere
+  /// el teclado; sin `inputFormatters` un teclado físico puede escribir
+  /// "-", así que este parseo sigue siendo necesario aunque los campos
+  /// ya filtren solo dígitos.
+  int? _parsearCantidad(String texto) {
+    final t = texto.trim();
+    if (t.isEmpty) return 0;
+    final v = int.tryParse(t);
+    if (v == null || v < 0) return null;
+    return v;
+  }
+
+  int _leer(TextEditingController c) => _parsearCantidad(c.text) ?? 0;
 
   @override
   Widget build(BuildContext context) {
@@ -100,68 +145,85 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
           _montoController.text = (tipoEnvase.valorDepositoCentavos / 100).toStringAsFixed(2);
         }
 
+        final deposito = _leer(_depositoController);
+        final prestamo = _leer(_prestamoController);
+        final entregado = _leer(_entregadoController);
+        final cubiertas = deposito + prestamo + entregado;
+        final cubreTodo = cubiertas == widget.cantidadSugerida;
+
         return AlertDialog(
           title: Text('Envase${tipoEnvase != null ? ' · ${tipoEnvase.nombre}' : ''}'),
-          content: RadioGroup<_Opcion>(
-            groupValue: _opcion,
-            onChanged: (valor) => setState(() => _opcion = valor!),
+          content: SizedBox(
+            width: 360,
             child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              RadioListTile<_Opcion>(
-                dense: true,
-                title: const Text('Sin operación de envase'),
-                value: _Opcion.ninguno,
-              ),
-              RadioListTile<_Opcion>(
-                dense: true,
-                title: const Text('Cobrar depósito (retornable)'),
-                value: _Opcion.deposito,
-              ),
-              RadioListTile<_Opcion>(
-                dense: true,
-                title: const Text('Prestar sin depósito'),
-                subtitle: !widget.hayCliente
-                    ? const Text('Requiere asociar un cliente a la venta')
-                    : null,
-                value: _Opcion.prestamo,
-                enabled: widget.hayCliente,
-              ),
-              RadioListTile<_Opcion>(
-                dense: true,
-                title: const Text('Entregar envase'),
-                subtitle: const Text('Sale sin depósito ni préstamo (intercambio en el momento)'),
-                value: _Opcion.entregado,
-              ),
-              RadioListTile<_Opcion>(
-                dense: true,
-                title: const Text('Recibir envase vacío del cliente'),
-                value: _Opcion.recibido,
-              ),
-              if (_opcion != _Opcion.ninguno) ...[
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cantidadController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Cantidad de envases'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!widget.hayCliente) ...[
+                  const Text(
+                    'Cobrar depósito o prestar sin depósito requiere asociar un '
+                    'cliente a la venta.',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                _CantidadRow(
+                  label: 'Cobrar depósito (retornable)',
+                  controller: _depositoController,
+                  enabled: widget.hayCliente,
+                  onChanged: () => setState(() {}),
                 ),
-                if (_opcion == _Opcion.deposito)
-                  TextField(
-                    controller: _montoController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Depósito por unidad',
-                      prefixText: r'$',
+                if (deposito > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: TextField(
+                      controller: _montoController,
+                      enabled: widget.hayCliente,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Depósito por unidad',
+                        prefixText: r'$',
+                        isDense: true,
+                      ),
                     ),
                   ),
+                _CantidadRow(
+                  label: 'Prestar sin depósito',
+                  controller: _prestamoController,
+                  enabled: widget.hayCliente,
+                  onChanged: () => setState(() {}),
+                ),
+                _CantidadRow(
+                  label: 'Entregar envase',
+                  controller: _entregadoController,
+                  onChanged: () => setState(() {}),
+                ),
+                _CantidadRow(
+                  label: 'Recibir envase vacío',
+                  controller: _recibidoController,
+                  onChanged: () => setState(() {}),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Cubre $cubiertas de ${widget.cantidadSugerida} unidad'
+                  '${widget.cantidadSugerida == 1 ? '' : 'es'}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: cubreTodo ? Colors.green.shade700 : Colors.amber.shade800,
+                  ),
+                ),
               ],
-            ],
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(const _Resultado(null)),
+              // Sin resultado (no un `_Resultado([])`): cancelar debe
+              // significar "no cambiar nada", igual que cerrar el diálogo
+              // tocando fuera de él — a diferencia de dejar las 4
+              // cantidades en 0 y dar Guardar, que sí es una decisión
+              // explícita de limpiar las operaciones configuradas.
+              onPressed: () => Navigator.of(context).pop(),
               child: const Text('Cancelar'),
             ),
             FilledButton(onPressed: () => _confirmar(context), child: const Text('Guardar')),
@@ -172,54 +234,104 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
   }
 
   void _confirmar(BuildContext context) {
-    if (_opcion == _Opcion.ninguno) {
-      Navigator.of(context).pop(const _Resultado(null));
-      return;
-    }
+    final deposito = _parsearCantidad(_depositoController.text);
+    final prestamo = _parsearCantidad(_prestamoController.text);
+    final entregado = _parsearCantidad(_entregadoController.text);
+    final recibido = _parsearCantidad(_recibidoController.text);
 
-    final cantidad = int.tryParse(_cantidadController.text);
-    if (cantidad == null || cantidad <= 0) {
+    if (deposito == null || prestamo == null || entregado == null || recibido == null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Cantidad de envase inválida')));
       return;
     }
 
-    if (_opcion == _Opcion.deposito) {
-      final monto = parseCentavosDesdeTexto(_montoController.text);
+    int? monto;
+    if (deposito > 0 && widget.hayCliente) {
+      monto = parseCentavosDesdeTexto(_montoController.text);
       if (monto == null) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Monto de depósito inválido')));
         return;
       }
-      Navigator.of(context).pop(
-        _Resultado(
-          OperacionEnvaseVenta(
-            tipoEnvaseId: widget.tipoEnvaseId,
-            tipo: TipoOperacionEnvase.depositoCobrado,
-            cantidad: cantidad,
-            montoUnitarioCentavos: monto,
-          ),
-        ),
-      );
-      return;
     }
 
-    final tipo = switch (_opcion) {
-      _Opcion.prestamo => TipoOperacionEnvase.prestado,
-      _Opcion.entregado => TipoOperacionEnvase.entregado,
-      _Opcion.recibido => TipoOperacionEnvase.recibido,
-      _Opcion.ninguno || _Opcion.deposito => throw StateError('Caso ya manejado arriba'),
-    };
-
-    Navigator.of(context).pop(
-      _Resultado(
+    final operaciones = <OperacionEnvaseVenta>[
+      // El filtro por `hayCliente` es cinturón y tirantes: los campos ya
+      // están deshabilitados sin cliente y `quitarCliente()` en el
+      // carrito garantiza que un `inicial` con depósito/préstamo nunca
+      // llega aquí sin cliente — esto solo cubre el caso de que ese
+      // invariante se rompiera en el futuro.
+      if (deposito > 0 && widget.hayCliente)
         OperacionEnvaseVenta(
           tipoEnvaseId: widget.tipoEnvaseId,
-          tipo: tipo,
-          cantidad: cantidad,
+          tipo: TipoOperacionEnvase.depositoCobrado,
+          cantidad: deposito,
+          montoUnitarioCentavos: monto,
         ),
+      if (prestamo > 0 && widget.hayCliente)
+        OperacionEnvaseVenta(
+          tipoEnvaseId: widget.tipoEnvaseId,
+          tipo: TipoOperacionEnvase.prestado,
+          cantidad: prestamo,
+        ),
+      if (entregado > 0)
+        OperacionEnvaseVenta(
+          tipoEnvaseId: widget.tipoEnvaseId,
+          tipo: TipoOperacionEnvase.entregado,
+          cantidad: entregado,
+        ),
+      if (recibido > 0)
+        OperacionEnvaseVenta(
+          tipoEnvaseId: widget.tipoEnvaseId,
+          tipo: TipoOperacionEnvase.recibido,
+          cantidad: recibido,
+        ),
+    ];
+
+    Navigator.of(context).pop(_Resultado(operaciones));
+  }
+}
+
+class _CantidadRow extends StatelessWidget {
+  const _CantidadRow({
+    required this.label,
+    required this.controller,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(color: enabled ? null : Colors.black38),
+            ),
+          ),
+          SizedBox(
+            width: 64,
+            child: TextField(
+              controller: controller,
+              enabled: enabled,
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(isDense: true),
+              onChanged: (_) => onChanged(),
+            ),
+          ),
+        ],
       ),
     );
   }

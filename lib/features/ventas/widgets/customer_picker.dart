@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
 import '../../../database/app_database.dart';
+import '../../../database/repositories/envase_repository.dart';
 import '../controllers/sale_cart_controller.dart';
 
 /// Botón/chip para asociar un cliente a la venta en progreso. No
@@ -26,8 +27,52 @@ class CustomerPicker extends ConsumerWidget {
     return Chip(
       avatar: const Icon(Icons.person, size: 18),
       label: Text(carrito.clienteNombre ?? 'Cliente'),
-      onDeleted: () => ref.read(saleCartControllerProvider.notifier).quitarCliente(),
+      onDeleted: () => _quitarCliente(context, ref, carrito),
     );
+  }
+
+  /// "Prestar sin depósito" y "Cobrar depósito" exigen cliente — quitarlo
+  /// borraría en silencio la configuración de esas líneas (ver
+  /// `SaleCartController.quitarCliente`). Si hay alguna afectada, se
+  /// confirma antes (mismo patrón que "¿Descartar venta actual?" en
+  /// `sales_screen.dart`); si no hay ninguna, se quita directo.
+  Future<void> _quitarCliente(BuildContext context, WidgetRef ref, SaleCartState carrito) async {
+    final afectadas = carrito.lineas
+        .where(
+          (l) => l.operacionesEnvase.any(
+            (o) =>
+                o.tipo == TipoOperacionEnvase.prestado ||
+                o.tipo == TipoOperacionEnvase.depositoCobrado,
+          ),
+        )
+        .length;
+
+    if (afectadas > 0) {
+      final confirmar = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('¿Quitar cliente?'),
+          content: Text(
+            'Se perderá la configuración de depósito/préstamo de '
+            '$afectadas línea${afectadas == 1 ? '' : 's'} de envase.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Quitar cliente'),
+            ),
+          ],
+        ),
+      );
+      if (confirmar != true) return;
+      if (!context.mounted) return;
+    }
+
+    ref.read(saleCartControllerProvider.notifier).quitarCliente();
   }
 
   Future<void> _abrirSelector(BuildContext context, WidgetRef ref) async {

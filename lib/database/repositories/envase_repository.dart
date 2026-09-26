@@ -37,12 +37,17 @@ class OperacionEnvaseVenta {
   final int? montoUnitarioCentavos;
 }
 
-class EnvasePrestadoSinClienteException implements Exception {
-  EnvasePrestadoSinClienteException();
+/// Se lanza tanto para el préstamo (Tipo C) como para el depósito cobrado
+/// (Tipo A): ambos dejan un pendiente ligado a la venta (envase por
+/// devolver, o depósito por devolver) que hoy solo es recuperable desde
+/// la ficha del cliente — sin cliente asociado, ese pendiente queda sin
+/// forma de liquidarse desde la app.
+class EnvaseSinClienteException implements Exception {
+  EnvaseSinClienteException();
 
   @override
   String toString() =>
-      'Prestar un envase (Tipo C) requiere asociar la venta a un cliente';
+      'Prestar un envase o cobrar un depósito de envase requiere asociar la venta a un cliente';
 }
 
 class DepositoSinMontoException implements Exception {
@@ -346,6 +351,10 @@ class EnvaseRepository {
   }
 
   Future<int> saldoFisico(int tipoEnvaseId) => _cuentas.saldoFisicoEnvase(tipoEnvaseId);
+
+  /// Versión reactiva de [saldoFisico] (ver [CuentasQueries.observarSaldoFisicoEnvase]).
+  Stream<int> observarSaldoFisico(int tipoEnvaseId) =>
+      _cuentas.observarSaldoFisicoEnvase(tipoEnvaseId);
 
   /// Operaciones de envase (depósito, préstamo, entrega, recepción)
   /// registradas junto con una venta específica.

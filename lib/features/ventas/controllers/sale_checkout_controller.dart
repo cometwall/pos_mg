@@ -65,8 +65,7 @@ class SaleCheckoutService {
         ),
     ];
     final operacionesEnvase = [
-      for (final linea in lineas)
-        if (linea.operacionEnvase != null) linea.operacionEnvase!,
+      for (final linea in lineas) ...linea.operacionesEnvase,
     ];
 
     try {
@@ -89,9 +88,9 @@ class SaleCheckoutService {
       );
     } on PagoIncompletoException catch (_) {
       return const CheckoutFallido('El cobro no cubre exactamente el total de la venta.');
-    } on EnvasePrestadoSinClienteException catch (_) {
+    } on EnvaseSinClienteException catch (_) {
       return const CheckoutFallido(
-        'Prestar un envase requiere asociar un cliente a la venta.',
+        'Prestar o cobrar el depósito de un envase requiere asociar un cliente a la venta.',
       );
     } on DepositoSinMontoException catch (_) {
       return const CheckoutFallido('Falta el monto del depósito de envase.');

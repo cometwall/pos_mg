@@ -21,6 +21,19 @@ class SaleCartState {
   int get subtotalCentavos =>
       lineas.fold<int>(0, (acc, linea) => acc + linea.subtotalCentavos);
 
+  /// Suma de los depósitos de envase configurados en las líneas
+  /// (`TipoOperacionEnvase.depositoCobrado`). El préstamo sin depósito y
+  /// entregar/recibir no suman aquí porque no implican cobrar dinero.
+  /// No forma parte de `subtotalCentavos`/`venta.total_centavos` (el
+  /// esquema los trata como conceptos independientes — ver
+  /// schema.drift), pero sí debe sumarse al monto que el cajero cobra
+  /// físicamente al cliente.
+  int get depositoEnvaseCentavos => lineas.fold<int>(0, (acc, linea) {
+    return linea.operacionesEnvase
+        .where((o) => o.tipo == TipoOperacionEnvase.depositoCobrado)
+        .fold(acc, (acc, o) => acc + o.cantidad * (o.montoUnitarioCentavos ?? 0));
+  });
+
   SaleCartState copyWith({List<SaleCartLine>? lineas}) {
     return SaleCartState(
       lineas: lineas ?? this.lineas,
@@ -81,15 +94,16 @@ class SaleCartController extends Notifier<SaleCartState> {
     );
   }
 
-  /// Configura (o quita, con `operacion: null`) la operación de envase
-  /// de una línea (depósito cobrado o préstamo). No aplica a productos
-  /// sin `tipoEnvaseId`.
-  void configurarEnvase(int productoId, OperacionEnvaseVenta? operacion) {
+  /// Reemplaza el cuadro completo de operaciones de envase de una línea
+  /// (depósito cobrado, préstamo, entregado, recibido — puede haber
+  /// varias combinadas). Lista vacía = sin operación. No aplica a
+  /// productos sin `tipoEnvaseId`.
+  void configurarEnvase(int productoId, List<OperacionEnvaseVenta> operaciones) {
     state = state.copyWith(
       lineas: [
         for (final linea in state.lineas)
           if (linea.productoId == productoId)
-            linea.copyWith(operacionEnvase: operacion, limpiarOperacionEnvase: operacion == null)
+            linea.copyWith(operacionesEnvase: operaciones)
           else
             linea,
       ],
@@ -106,8 +120,26 @@ class SaleCartController extends Notifier<SaleCartState> {
     state = SaleCartState(lineas: state.lineas, clienteId: id, clienteNombre: nombre);
   }
 
+  /// Quita el cliente asociado. "Prestar sin depósito" y "Cobrar
+  /// depósito" exigen cliente (ver `EnvaseSinClienteException`), así que
+  /// cualquier línea configurada con esas operaciones queda huérfana sin
+  /// cliente — se limpia aquí mismo para que el carrito nunca muestre una
+  /// operación que ya no se puede cobrar.
   void quitarCliente() {
-    state = SaleCartState(lineas: state.lineas);
+    state = SaleCartState(
+      lineas: [
+        for (final linea in state.lineas)
+          linea.copyWith(
+            operacionesEnvase: linea.operacionesEnvase
+                .where(
+                  (o) =>
+                      o.tipo != TipoOperacionEnvase.prestado &&
+                      o.tipo != TipoOperacionEnvase.depositoCobrado,
+                )
+                .toList(),
+          ),
+      ],
+    );
   }
 
   void limpiar() {

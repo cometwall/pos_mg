@@ -83,6 +83,7 @@ void main() {
       ],
       cobros: const [Cobro(metodo: MetodoPago.efectivo, montoCentavos: 1500)],
       cajaSesionId: sesionId,
+      clienteId: clienteId,
       operacionesEnvase: [
         OperacionEnvaseVenta(
           tipoEnvaseId: tipoEnvaseId,
@@ -128,7 +129,38 @@ void main() {
           ),
         ],
       ),
-      throwsA(isA<EnvasePrestadoSinClienteException>()),
+      throwsA(isA<EnvaseSinClienteException>()),
+    );
+
+    expect(await db.select(db.venta).get(), isEmpty);
+  });
+
+  test('venta con deposito cobrado sin cliente se rechaza antes de tocar la base', () async {
+    await expectLater(
+      ventas.registrarVentaConPago(
+        terminalId: terminalId,
+        folio: 'V003B',
+        usuarioId: usuarioId,
+        items: [
+          ItemVenta(
+            productoId: productoId,
+            cantidad: 1,
+            precioUnitarioCentavos: 1500,
+            costoUnitarioCentavos: 900,
+          ),
+        ],
+        cobros: const [Cobro(metodo: MetodoPago.efectivo, montoCentavos: 1500)],
+        cajaSesionId: sesionId,
+        operacionesEnvase: [
+          OperacionEnvaseVenta(
+            tipoEnvaseId: tipoEnvaseId,
+            tipo: TipoOperacionEnvase.depositoCobrado,
+            cantidad: 2,
+            montoUnitarioCentavos: 5000,
+          ),
+        ],
+      ),
+      throwsA(isA<EnvaseSinClienteException>()),
     );
 
     expect(await db.select(db.venta).get(), isEmpty);
@@ -165,6 +197,72 @@ void main() {
     expect(movimientosCaja, hasLength(1));
     expect(movimientosCaja.single.montoCentavos, 1500);
     expect(movimientosCaja.single.referenciaId, ventaId);
+  });
+
+  test('venta con envase entregado no mueve el stock fisico de envases', () async {
+    final ventaId = await ventas.registrarVentaConPago(
+      terminalId: terminalId,
+      folio: 'V006',
+      usuarioId: usuarioId,
+      items: [
+        ItemVenta(
+          productoId: productoId,
+          cantidad: 1,
+          precioUnitarioCentavos: 1500,
+          costoUnitarioCentavos: 900,
+        ),
+      ],
+      cobros: const [Cobro(metodo: MetodoPago.efectivo, montoCentavos: 1500)],
+      cajaSesionId: sesionId,
+      operacionesEnvase: [
+        OperacionEnvaseVenta(
+          tipoEnvaseId: tipoEnvaseId,
+          tipo: TipoOperacionEnvase.entregado,
+          cantidad: 1,
+        ),
+      ],
+    );
+
+    // El stock de envases sigue en 10 (lo que compró el setUp): el
+    // cliente trajo su propio envase vacío a cambio del lleno, así que
+    // no hay salida física que registrar.
+    expect(await envases.saldoFisico(tipoEnvaseId), 10);
+
+    // Pero sí queda el registro de que ocurrió, para historial/reportes.
+    final operaciones = await envases.listarOperaciones(ventaId);
+    expect(operaciones, hasLength(1));
+    expect(operaciones.single.tipo, 'ENTREGADO');
+  });
+
+  test('venta con envase entregado no requiere stock fisico disponible', () async {
+    // A diferencia de depósito/préstamo, "entregado" no es una salida
+    // física de la tienda (ver test anterior), así que puede pedirse
+    // más de lo que hay en stock sin que se rechace.
+    final ventaId = await ventas.registrarVentaConPago(
+      terminalId: terminalId,
+      folio: 'V007',
+      usuarioId: usuarioId,
+      items: [
+        ItemVenta(
+          productoId: productoId,
+          cantidad: 1,
+          precioUnitarioCentavos: 1500,
+          costoUnitarioCentavos: 900,
+        ),
+      ],
+      cobros: const [Cobro(metodo: MetodoPago.efectivo, montoCentavos: 1500)],
+      cajaSesionId: sesionId,
+      operacionesEnvase: [
+        OperacionEnvaseVenta(
+          tipoEnvaseId: tipoEnvaseId,
+          tipo: TipoOperacionEnvase.entregado,
+          cantidad: 999,
+        ),
+      ],
+    );
+
+    expect(ventaId, isPositive);
+    expect(await envases.saldoFisico(tipoEnvaseId), 10);
   });
 
   test('venta con envase sin stock fisico suficiente se rechaza', () async {

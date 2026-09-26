@@ -15,20 +15,43 @@ enum _MetodoTab { efectivo, tarjeta, mixto }
 /// aplicado a la venta. Por eso el campo de efectivo recibido y el
 /// cambio calculado viven solo en este diálogo (ayuda visual para el
 /// cajero) y nunca se envían al backend.
+///
+/// [depositoCentavos] (si hay envase con depósito cobrado en el carrito)
+/// se suma a [productoCentavos] para todo lo que ve y cuenta el cajero
+/// (título, recibido/cambio, restante) — así no se le olvida cobrarlo
+/// físicamente — pero los [Cobro] que arma este diálogo siguen sumando
+/// exactamente [productoCentavos]: el depósito nunca pasa por `pago`,
+/// solo por el movimiento de caja que inserta
+/// `VentaRepository._registrarOperacionesEnvase`, y siempre como
+/// efectivo (nunca tarjeta), sin importar el método elegido para el
+/// producto.
 class PaymentDialog extends StatefulWidget {
-  const PaymentDialog({super.key, required this.totalCentavos, required this.haySesionCaja});
+  const PaymentDialog({
+    super.key,
+    required this.productoCentavos,
+    required this.haySesionCaja,
+    this.depositoCentavos = 0,
+  });
 
-  final int totalCentavos;
+  final int productoCentavos;
+  final int depositoCentavos;
   final bool haySesionCaja;
+
+  int get totalCentavos => productoCentavos + depositoCentavos;
 
   static Future<List<Cobro>?> show(
     BuildContext context, {
-    required int totalCentavos,
+    required int productoCentavos,
     required bool haySesionCaja,
+    int depositoCentavos = 0,
   }) {
     return showDialog<List<Cobro>>(
       context: context,
-      builder: (_) => PaymentDialog(totalCentavos: totalCentavos, haySesionCaja: haySesionCaja),
+      builder: (_) => PaymentDialog(
+        productoCentavos: productoCentavos,
+        haySesionCaja: haySesionCaja,
+        depositoCentavos: depositoCentavos,
+      ),
     );
   }
 
@@ -91,8 +114,12 @@ class _PaymentDialogState extends State<PaymentDialog> {
               onSelectionChanged: (seleccion) => setState(() => _tab = seleccion.first),
             ),
             const SizedBox(height: 16),
-            if (!widget.haySesionCaja && _tab != _MetodoTab.tarjeta) ...[
-              const _AvisoSinCaja(),
+            if (widget.depositoCentavos > 0) ...[
+              _AvisoDeposito(depositoCentavos: widget.depositoCentavos),
+              const SizedBox(height: 12),
+            ],
+            if (!widget.haySesionCaja && (_tab != _MetodoTab.tarjeta || widget.depositoCentavos > 0)) ...[
+              _AvisoSinCaja(bloqueaTodo: widget.depositoCentavos > 0),
               const SizedBox(height: 12),
             ],
             switch (_tab) {
@@ -108,6 +135,7 @@ class _PaymentDialogState extends State<PaymentDialog> {
               _MetodoTab.tarjeta => const _TarjetaPanel(),
               _MetodoTab.mixto => _MixtoPanel(
                 totalCentavos: widget.totalCentavos,
+                depositoCentavos: widget.depositoCentavos,
                 efectivoController: _mixtoEfectivoController,
                 tarjetaController: _mixtoTarjetaController,
                 onChanged: () => setState(() {}),
@@ -127,6 +155,11 @@ class _PaymentDialogState extends State<PaymentDialog> {
   }
 
   bool _puedeConfirmar() {
+    // El depósito siempre es efectivo físico (movimiento_caja), sin
+    // importar el método elegido para el producto: sin sesión de caja
+    // abierta no hay dónde registrarlo, así que bloquea incluso en la
+    // pestaña Tarjeta.
+    if (widget.depositoCentavos > 0 && !widget.haySesionCaja) return false;
     if (!widget.haySesionCaja && _tab != _MetodoTab.tarjeta) return false;
     switch (_tab) {
       case _MetodoTab.efectivo:
@@ -137,21 +170,31 @@ class _PaymentDialogState extends State<PaymentDialog> {
       case _MetodoTab.mixto:
         final efectivo = parseCentavosDesdeTexto(_mixtoEfectivoController.text) ?? 0;
         final tarjeta = parseCentavosDesdeTexto(_mixtoTarjetaController.text) ?? 0;
-        return efectivo >= 0 && tarjeta >= 0 && efectivo + tarjeta == widget.totalCentavos;
+        return efectivo >= widget.depositoCentavos &&
+            tarjeta >= 0 &&
+            efectivo + tarjeta == widget.totalCentavos;
     }
   }
 
+  /// El monto aplicado a la venta (`Cobro`) nunca incluye el depósito de
+  /// envase: ese dinero no pasa por `pago`, se registra aparte como
+  /// movimiento de caja (ver doc de [PaymentDialog]). Por eso cada rama
+  /// resta [PaymentDialog.depositoCentavos] antes de construir el
+  /// [Cobro] — lo que el cajero ve y cuenta en pantalla sí lo incluye,
+  /// pero lo que se envía al backend no.
   List<Cobro> _construirCobros() {
     switch (_tab) {
       case _MetodoTab.efectivo:
-        return [Cobro(metodo: MetodoPago.efectivo, montoCentavos: widget.totalCentavos)];
+        return [Cobro(metodo: MetodoPago.efectivo, montoCentavos: widget.productoCentavos)];
       case _MetodoTab.tarjeta:
-        return [Cobro(metodo: MetodoPago.tarjeta, montoCentavos: widget.totalCentavos)];
+        return [Cobro(metodo: MetodoPago.tarjeta, montoCentavos: widget.productoCentavos)];
       case _MetodoTab.mixto:
         final efectivo = parseCentavosDesdeTexto(_mixtoEfectivoController.text) ?? 0;
         final tarjeta = parseCentavosDesdeTexto(_mixtoTarjetaController.text) ?? 0;
+        final efectivoProducto = efectivo - widget.depositoCentavos;
         return [
-          if (efectivo > 0) Cobro(metodo: MetodoPago.efectivo, montoCentavos: efectivo),
+          if (efectivoProducto > 0)
+            Cobro(metodo: MetodoPago.efectivo, montoCentavos: efectivoProducto),
           if (tarjeta > 0) Cobro(metodo: MetodoPago.tarjeta, montoCentavos: tarjeta),
         ];
     }
@@ -159,7 +202,12 @@ class _PaymentDialogState extends State<PaymentDialog> {
 }
 
 class _AvisoSinCaja extends StatelessWidget {
-  const _AvisoSinCaja();
+  const _AvisoSinCaja({this.bloqueaTodo = false});
+
+  /// `true` cuando hay un depósito de envase pendiente: ese dinero
+  /// siempre es efectivo (movimiento de caja), así que ni siquiera
+  /// cobrar el producto con tarjeta desbloquea el botón de confirmar.
+  final bool bloqueaTodo;
 
   @override
   Widget build(BuildContext context) {
@@ -170,12 +218,49 @@ class _AvisoSinCaja extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.amber.shade200),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 20),
-          SizedBox(width: 8),
+          const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 20),
+          const SizedBox(width: 8),
           Expanded(
-            child: Text('Necesitas abrir la caja para cobrar en efectivo. Puedes cobrar con tarjeta mientras tanto.'),
+            child: Text(
+              bloqueaTodo
+                  ? 'Necesitas abrir la caja para cobrar el depósito de envase de esta venta (siempre es efectivo).'
+                  : 'Necesitas abrir la caja para cobrar en efectivo. Puedes cobrar con tarjeta mientras tanto.',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Recuerda al cajero que el TOTAL incluye un depósito de envase que
+/// debe cobrarse físicamente, aparte del pago del producto (ver doc de
+/// [PaymentDialog] sobre por qué nunca viaja como [Cobro]).
+class _AvisoDeposito extends StatelessWidget {
+  const _AvisoDeposito({required this.depositoCentavos});
+
+  final int depositoCentavos;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.liquor_outlined, color: Colors.blue.shade700, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Incluye ${formatCentavos(depositoCentavos)} de depósito de envase, '
+              'siempre en efectivo (aunque el producto se cobre con tarjeta).',
+            ),
           ),
         ],
       ),
@@ -279,9 +364,11 @@ class _MixtoPanel extends StatelessWidget {
     required this.efectivoController,
     required this.tarjetaController,
     required this.onChanged,
+    this.depositoCentavos = 0,
   });
 
   final int totalCentavos;
+  final int depositoCentavos;
   final TextEditingController efectivoController;
   final TextEditingController tarjetaController;
   final VoidCallback onChanged;
@@ -291,6 +378,7 @@ class _MixtoPanel extends StatelessWidget {
     final efectivo = parseCentavosDesdeTexto(efectivoController.text) ?? 0;
     final tarjeta = parseCentavosDesdeTexto(tarjetaController.text) ?? 0;
     final restante = totalCentavos - efectivo - tarjeta;
+    final faltaCubrirDeposito = efectivo < depositoCentavos;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -298,7 +386,13 @@ class _MixtoPanel extends StatelessWidget {
         TextField(
           controller: efectivoController,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Monto en efectivo', prefixText: r'$'),
+          decoration: InputDecoration(
+            labelText: 'Monto en efectivo',
+            prefixText: r'$',
+            helperText: depositoCentavos > 0
+                ? 'Debe cubrir al menos el depósito de envase (${formatCentavos(depositoCentavos)})'
+                : null,
+          ),
           onChanged: (_) => onChanged(),
         ),
         const SizedBox(height: 8),
@@ -310,10 +404,14 @@ class _MixtoPanel extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(
-          restante == 0
+          faltaCubrirDeposito
+              ? 'El efectivo no alcanza a cubrir el depósito de envase.'
+              : restante == 0
               ? 'Los montos cubren el total exacto.'
               : 'Falta ${formatCentavos(restante)} para cubrir el total.',
-          style: TextStyle(color: restante == 0 ? Colors.green.shade700 : Colors.red.shade700),
+          style: TextStyle(
+            color: faltaCubrirDeposito || restante != 0 ? Colors.red.shade700 : Colors.green.shade700,
+          ),
         ),
       ],
     );
