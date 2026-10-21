@@ -1,13 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../database/app_database.dart';
-import '../database/repositories/catalogo_repository.dart';
+import '../features/auth/controllers/auth_controller.dart';
 import 'providers.dart';
 
-/// El proyecto todavía no tiene login: se bootstrapea un terminal y un
-/// usuario por defecto la primera vez que se usa la app (si ya existen,
-/// se reutiliza el primero). Cuando exista un módulo de login/usuarios,
-/// esto se reemplaza por la sesión real autenticada.
+/// Todavía no hay gestión de terminales: se bootstrapea un terminal por
+/// defecto la primera vez que se usa la app (si ya existe, se reutiliza
+/// el primero).
 final currentTerminalProvider = FutureProvider<TerminalData>((ref) async {
   final repo = ref.watch(terminalRepositoryProvider);
   final activos = await repo.listarActivos();
@@ -16,13 +15,20 @@ final currentTerminalProvider = FutureProvider<TerminalData>((ref) async {
   return (await repo.listarActivos()).firstWhere((t) => t.id == id);
 });
 
+/// Usuario de la sesión iniciada en el login. Las pantallas solo son
+/// alcanzables con sesión activa, así que no debería fallar en la
+/// práctica.
 final currentUsuarioProvider = FutureProvider<UsuarioData>((ref) async {
-  final repo = ref.watch(usuarioRepositoryProvider);
-  final activos = await repo.listarActivos();
-  if (activos.isNotEmpty) return activos.first;
-  final id = await repo.crear(nombre: 'Cajero', rol: RolUsuario.cajero);
-  return (await repo.listarActivos()).firstWhere((u) => u.id == id);
+  final sesion = ref.watch(authControllerProvider);
+  if (sesion == null) {
+    throw StateError('No hay una sesión de usuario iniciada');
+  }
+  return sesion.usuario;
 });
+
+final esAdminProvider = Provider<bool>(
+  (ref) => ref.watch(authControllerProvider)?.esAdmin ?? false,
+);
 
 /// Sesión de caja ABIERTA del terminal actual, o `null` si no hay
 /// ninguna. Es estado global transversal: Ventas la consulta para saber

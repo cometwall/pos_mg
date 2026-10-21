@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
 import '../../../app/session_providers.dart';
+import '../../../core/money.dart';
 import '../../../database/app_database.dart';
 import '../../../database/repositories/devolucion_repository.dart';
+import '../../../database/repositories/envase_repository.dart';
 import '../../../database/repositories/venta_repository.dart';
 import '../../../shared/widgets/money_display.dart';
 import '../controllers/sale_history_controllers.dart';
@@ -44,6 +46,7 @@ class _SaleDetailBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final detalleAsync = ref.watch(detalleVentaProvider(venta.id));
     final pagosAsync = ref.watch(pagosVentaProvider(venta.id));
+    final operacionesEnvaseAsync = ref.watch(operacionesEnvaseVentaProvider(venta.id));
     final tieneTarjetaAsync = ref.watch(tienePagoTarjetaProvider(venta.id));
     final clienteAsync = venta.clienteId != null
         ? ref.watch(nombreClienteProvider(venta.clienteId!))
@@ -90,6 +93,23 @@ class _SaleDetailBody extends ConsumerWidget {
             child: CircularProgressIndicator(),
           ),
           error: (error, _) => Text('Error: $error'),
+        ),
+        operacionesEnvaseAsync.when(
+          data: (operaciones) {
+            if (operaciones.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 16),
+                const Text('Envases', style: TextStyle(fontWeight: FontWeight.w700)),
+                const Divider(),
+                for (final operacion in operaciones)
+                  _OperacionEnvaseTile(ventaId: venta.id, operacion: operacion),
+              ],
+            );
+          },
+          loading: () => const SizedBox.shrink(),
+          error: (_, _) => const SizedBox.shrink(),
         ),
         const SizedBox(height: 16),
         const Text('Pagos', style: TextStyle(fontWeight: FontWeight.w700)),
@@ -185,6 +205,7 @@ class _DetalleLineaTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final nombreAsync = ref.watch(nombreProductoProvider(detalle.productoId));
     final activaAsync = ref.watch(cantidadActivaDetalleProvider(detalle.id));
+    final productoAsync = ref.watch(productoPorIdProvider(detalle.productoId));
 
     return ListTile(
       dense: true,
@@ -207,7 +228,12 @@ class _DetalleLineaTile extends ConsumerWidget {
               icon: const Icon(Icons.assignment_return_outlined),
               tooltip: 'Devolver',
               onPressed: (activaAsync.value ?? 0) > 0
-                  ? () => _devolverProducto(context, ref, activaAsync.value!)
+                  ? () => _devolverProducto(
+                      context,
+                      ref,
+                      activaAsync.value!,
+                      productoAsync.value?.tipoEnvaseId,
+                    )
                   : null,
             ),
         ],
@@ -215,8 +241,29 @@ class _DetalleLineaTile extends ConsumerWidget {
     );
   }
 
-  Future<void> _devolverProducto(BuildContext context, WidgetRef ref, int activa) async {
+  Future<void> _devolverProducto(
+    BuildContext context,
+    WidgetRef ref,
+    int activa,
+    int? tipoEnvaseId,
+  ) async {
+    // Si el producto tiene envase, se consulta cuánto depósito/préstamo
+    // sigue pendiente en ESTA venta para ofrecer liquidarlo junto con la
+    // devolución (ver doc de `DevolucionRepository.registrarDevolucion`
+    // sobre por qué reutiliza devolverDeposito/devolverEnvasePrestado en
+    // vez de un movimiento nuevo).
+    var depositoPendiente = 0;
+    var prestamoPendiente = 0;
+    if (tipoEnvaseId != null) {
+      final cuentas = ref.read(cuentasQueriesProvider);
+      depositoPendiente = await cuentas.depositoPendienteVenta(ventaId, tipoEnvaseId);
+      prestamoPendiente = await cuentas.envasePendienteVenta(ventaId, tipoEnvaseId);
+    }
+    if (!context.mounted) return;
+
     final cantidadController = TextEditingController(text: '1');
+    final envaseDepositoController = TextEditingController(text: '0');
+    final envasePrestamoController = TextEditingController(text: '0');
     var condicion = CondicionDevolucion.bueno;
 
     final confirmar = await showDialog<bool>(
@@ -256,6 +303,34 @@ class _DetalleLineaTile extends ConsumerWidget {
                       ],
                     ),
                   ),
+                  if (depositoPendiente > 0 || prestamoPendiente > 0) ...[
+                    const Divider(),
+                    const Text(
+                      '¿El envase también regresa?',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const Text(
+                      'Independiente de la condición del producto — el envase puede '
+                      'estar bien aunque el producto no.',
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                    if (depositoPendiente > 0)
+                      TextField(
+                        controller: envaseDepositoController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Regresa con depósito (pendiente: $depositoPendiente)',
+                        ),
+                      ),
+                    if (prestamoPendiente > 0)
+                      TextField(
+                        controller: envasePrestamoController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'Regresa de préstamo (pendiente: $prestamoPendiente)',
+                        ),
+                      ),
+                  ],
                 ],
               ),
               actions: [
@@ -276,7 +351,13 @@ class _DetalleLineaTile extends ConsumerWidget {
 
     if (confirmar != true) return;
     final cantidad = int.tryParse(cantidadController.text);
-    if (cantidad == null || cantidad <= 0 || cantidad > activa) {
+    final envaseDeposito = int.tryParse(envaseDepositoController.text) ?? 0;
+    final envasePrestamo = int.tryParse(envasePrestamoController.text) ?? 0;
+    if (cantidad == null ||
+        cantidad <= 0 ||
+        cantidad > activa ||
+        envaseDeposito < 0 ||
+        envasePrestamo < 0) {
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
@@ -299,6 +380,9 @@ class _DetalleLineaTile extends ConsumerWidget {
             condicion: condicion,
             usuarioId: usuario.id,
             cajaSesionId: sesion?.id,
+            tipoEnvaseId: tipoEnvaseId,
+            envaseDepositoRegresa: envaseDeposito,
+            envasePrestamoRegresa: envasePrestamo,
           );
     } catch (e) {
       if (!context.mounted) return;
@@ -320,8 +404,94 @@ String _mensajeError(Object error) {
   if (error is TerminalCajaNoCoincideException) {
     return 'La sesión de caja no corresponde al terminal de esta venta, o no está abierta.';
   }
+  if (error is EnvaseRegresaExcedeCantidadException) {
+    return 'Se marcaron ${error.solicitado} envases como regresados pero solo se '
+        'están devolviendo ${error.cantidadDevuelta} unidades de producto.';
+  }
+  if (error is CantidadExcedePendienteEnvaseException) {
+    return 'Se pidió regresar ${error.solicitada} envases pero solo hay '
+        '${error.pendiente} pendientes en esa venta.';
+  }
   if (error is ArgumentError) {
     return error.message?.toString() ?? 'Se necesita abrir la caja para completar el reembolso en efectivo.';
   }
   return 'No se pudo completar la operación: $error';
 }
+
+/// Fila de una operación de envase registrada en la venta original
+/// (depósito, préstamo, entregado o recibido). Para depósito/préstamo
+/// muestra además cuánto sigue pendiente en esta venta — así una
+/// devolución que liquidó parte de ese pendiente (ver
+/// `DevolucionRepository.registrarDevolucion`) se refleja aquí sin tener
+/// que ir a la ficha del cliente a comprobarlo.
+class _OperacionEnvaseTile extends StatelessWidget {
+  const _OperacionEnvaseTile({required this.ventaId, required this.operacion});
+
+  final int ventaId;
+  final OperacionEnvaseData operacion;
+
+  @override
+  Widget build(BuildContext context) {
+    final esDeposito = operacion.tipo == 'DEPOSITO_COBRADO';
+    final esPrestamo = operacion.tipo == 'PRESTADO';
+
+    return ListTile(
+      dense: true,
+      title: Text('${_etiquetaOperacionEnvase(operacion.tipo)}: ${operacion.cantidad}'),
+      subtitle: operacion.montoUnitarioCentavos != null
+          ? Text('Depósito unitario: ${formatCentavos(operacion.montoUnitarioCentavos!)}')
+          : null,
+      trailing: esDeposito || esPrestamo
+          ? _PendienteEnvaseBadge(
+              ventaId: ventaId,
+              tipoEnvaseId: operacion.tipoEnvaseId,
+              esDeposito: esDeposito,
+            )
+          : null,
+    );
+  }
+}
+
+class _PendienteEnvaseBadge extends ConsumerWidget {
+  const _PendienteEnvaseBadge({
+    required this.ventaId,
+    required this.tipoEnvaseId,
+    required this.esDeposito,
+  });
+
+  final int ventaId;
+  final int tipoEnvaseId;
+  final bool esDeposito;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pendienteAsync = esDeposito
+        ? ref.watch(depositoPendienteVentaProvider((ventaId, tipoEnvaseId)))
+        : ref.watch(prestamoPendienteVentaProvider((ventaId, tipoEnvaseId)));
+
+    return pendienteAsync.when(
+      data: (pendiente) => Text(
+        pendiente > 0 ? 'Pendiente: $pendiente' : 'Liquidado',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: pendiente > 0 ? Colors.amber.shade800 : Colors.green.shade700,
+        ),
+      ),
+      loading: () => const SizedBox(
+        height: 12,
+        width: 12,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+      error: (_, _) => const SizedBox.shrink(),
+    );
+  }
+}
+
+String _etiquetaOperacionEnvase(String tipo) => switch (tipo) {
+  'DEPOSITO_COBRADO' => 'Depósito cobrado',
+  'PRESTADO' => 'Prestado',
+  'ENTREGADO' => 'Entregado',
+  'RECIBIDO' => 'Recibido',
+  _ => tipo,
+};

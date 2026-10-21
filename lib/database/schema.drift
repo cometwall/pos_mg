@@ -51,7 +51,37 @@ CREATE TABLE usuario (
     nombre          TEXT NOT NULL,
     rol             TEXT NOT NULL CHECK (rol IN ('DUEÑO','CAJERO')),
     activo          INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1)),
-    creado_en       TEXT NOT NULL DEFAULT (datetime('now'))
+    creado_en       TEXT NOT NULL DEFAULT (datetime('now')),
+    -- v2 (login): identidad en el backend. NULL para usuarios creados
+    -- antes del login, que se conservan por las FKs de su historial.
+    remoto_id       INTEGER,
+    nombre_usuario  TEXT,
+    sucursal_id     INTEGER
+);
+
+CREATE UNIQUE INDEX uq_usuario_remoto_id ON usuario(remoto_id) WHERE remoto_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_usuario_nombre_usuario ON usuario(nombre_usuario) WHERE nombre_usuario IS NOT NULL;
+
+-- Hash local de la contraseña para el login sin conexión. Solo se
+-- escribe tras un login online exitoso. Separada de `usuario` para que
+-- el hash no viaje en las consultas normales de usuarios.
+CREATE TABLE credencial_offline (
+    usuario_id      INTEGER PRIMARY KEY REFERENCES usuario(id),
+    hash            BLOB NOT NULL,
+    salt            BLOB NOT NULL,
+    iteraciones     INTEGER NOT NULL CHECK (iteraciones > 0),
+    actualizado_en  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- v3: sucursal a la que pertenece ESTE equipo. Una sola fila (id = 1).
+-- La crea el primer administrador que inicia sesión online; solo los
+-- usuarios de esa sucursal pueden entrar en el equipo.
+CREATE TABLE dispositivo_config (
+    id                       INTEGER PRIMARY KEY CHECK (id = 1),
+    sucursal_id              INTEGER NOT NULL,
+    sucursal_nombre          TEXT,
+    vinculado_por_usuario_id INTEGER NOT NULL REFERENCES usuario(id),
+    vinculado_en             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Una sesión ABIERTA nunca tiene datos de cierre, y una CERRADA

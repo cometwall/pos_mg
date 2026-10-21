@@ -13,11 +13,26 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.connection);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (Migrator m) => m.createAll(),
+    onUpgrade: (Migrator m, int from, int to) async {
+      if (from < 2) {
+        // v2: login contra el backend + credencial para modo offline.
+        await m.addColumn(usuario, usuario.remotoId);
+        await m.addColumn(usuario, usuario.nombreUsuario);
+        await m.addColumn(usuario, usuario.sucursalId);
+        await m.create(uqUsuarioRemotoId);
+        await m.create(uqUsuarioNombreUsuario);
+        await m.createTable(credencialOffline);
+      }
+      if (from < 3) {
+        // v3: sucursal vinculada a este equipo.
+        await m.createTable(dispositivoConfig);
+      }
+    },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');
     },

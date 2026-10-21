@@ -7,10 +7,12 @@ import '../database/repositories/cliente_repository.dart';
 import '../database/repositories/compra_repository.dart';
 import '../database/repositories/cuentas_queries.dart';
 import '../database/repositories/devolucion_repository.dart';
+import '../database/repositories/dispositivo_repository.dart';
 import '../database/repositories/envase_repository.dart';
 import '../database/repositories/inventario_repository.dart';
 import '../database/repositories/pago_repository.dart';
 import '../database/repositories/producto_repository.dart';
+import '../database/repositories/usuario_auth_repository.dart';
 import '../database/repositories/venta_repository.dart';
 
 /// Instancia única de la base de datos para toda la app. Se cierra
@@ -24,6 +26,19 @@ final appDatabaseProvider = Provider<AppDatabase>((ref) {
 
 final terminalRepositoryProvider = Provider<TerminalRepository>(
   (ref) => TerminalRepository(ref.watch(appDatabaseProvider)),
+);
+
+final dispositivoRepositoryProvider = Provider<DispositivoRepository>(
+  (ref) => DispositivoRepository(ref.watch(appDatabaseProvider)),
+);
+
+/// Sucursal vinculada a este equipo, o `null` si aún no se configura.
+final dispositivoConfigProvider = StreamProvider<DispositivoConfigData?>(
+  (ref) => ref.watch(dispositivoRepositoryProvider).observar(),
+);
+
+final usuarioAuthRepositoryProvider = Provider<UsuarioAuthRepository>(
+  (ref) => UsuarioAuthRepository(ref.watch(appDatabaseProvider)),
 );
 
 final usuarioRepositoryProvider = Provider<UsuarioRepository>(

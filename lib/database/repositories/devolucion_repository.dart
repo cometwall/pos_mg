@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 
 import '../app_database.dart';
 import 'cuentas_queries.dart';
+import 'envase_repository.dart';
 import 'venta_repository.dart' show ReembolsoTarjetaNoSoportadoException;
 
 /// Espeja el CHECK (condicion IN ('BUENO','DAÑADO')) de la tabla `devolucion`.
@@ -32,11 +33,27 @@ class CantidadExcedeActivaException implements Exception {
       'en la línea $detalleVentaId (ya devueltas antes o venta con menos cantidad)';
 }
 
+class EnvaseRegresaExcedeCantidadException implements Exception {
+  EnvaseRegresaExcedeCantidadException({
+    required this.solicitado,
+    required this.cantidadDevuelta,
+  });
+
+  final int solicitado;
+  final int cantidadDevuelta;
+
+  @override
+  String toString() =>
+      'Se marcaron $solicitado envases como regresados pero solo se están '
+      'devolviendo $cantidadDevuelta unidades de producto';
+}
+
 class DevolucionRepository {
   DevolucionRepository(this._db);
 
   final AppDatabase _db;
   late final CuentasQueries _cuentas = CuentasQueries(_db);
+  late final EnvaseRepository _envases = EnvaseRepository(_db);
 
   /// Registra la devolución de [cantidad] unidades de [productoId] en la
   /// línea [detalleVentaId] de [ventaId]. Si [condicion] es BUENO, el
@@ -46,6 +63,17 @@ class DevolucionRepository {
   /// la deuda pendiente de esa venta (si existiera); el remanente se
   /// devuelve en efectivo vía [cajaSesionId]. Rechaza la operación si la
   /// venta tuvo algún pago con tarjeta.
+  ///
+  /// Si el producto tiene envase y ese envase también regresa junto con
+  /// el producto devuelto (independiente de [condicion]: un producto
+  /// dañado no implica que el envase también lo esté), [tipoEnvaseId] +
+  /// [envaseDepositoRegresa]/[envasePrestamoRegresa] lo liquidan contra
+  /// el pendiente de esa venta — reutilizando exactamente
+  /// [EnvaseRepository.devolverDeposito]/[devolverEnvasePrestado], el
+  /// mismo mecanismo que ya usa la ficha del cliente, porque un envase
+  /// "entregado" (el cliente trajo el suyo) nunca tuvo pendiente que
+  /// liquidar y un `CANCELACION` de envase solo es válido cuando toda la
+  /// venta se cancela (`cancelarVenta`), no en una devolución parcial.
   Future<int> registrarDevolucion({
     required int ventaId,
     required int detalleVentaId,
@@ -54,12 +82,51 @@ class DevolucionRepository {
     required CondicionDevolucion condicion,
     required int usuarioId,
     int? cajaSesionId,
-  }) {
+    int? tipoEnvaseId,
+    int envaseDepositoRegresa = 0,
+    int envasePrestamoRegresa = 0,
+  }) async {
     if (cantidad <= 0) {
       throw ArgumentError.value(cantidad, 'cantidad', 'Debe ser mayor que 0');
     }
+    if (envaseDepositoRegresa < 0 || envasePrestamoRegresa < 0) {
+      throw ArgumentError.value(
+        envaseDepositoRegresa < 0 ? envaseDepositoRegresa : envasePrestamoRegresa,
+        'envaseDepositoRegresa/envasePrestamoRegresa',
+        'Debe ser mayor o igual a 0',
+      );
+    }
+    if (envaseDepositoRegresa + envasePrestamoRegresa > cantidad) {
+      throw EnvaseRegresaExcedeCantidadException(
+        solicitado: envaseDepositoRegresa + envasePrestamoRegresa,
+        cantidadDevuelta: cantidad,
+      );
+    }
+    if (envaseDepositoRegresa > 0) {
+      if (tipoEnvaseId == null) {
+        throw ArgumentError.value(
+          tipoEnvaseId,
+          'tipoEnvaseId',
+          'Se necesita el tipo de envase para devolver el depósito',
+        );
+      }
+      if (cajaSesionId == null) {
+        throw ArgumentError.value(
+          cajaSesionId,
+          'cajaSesionId',
+          'Se requiere una sesión de caja abierta para devolver el depósito en efectivo',
+        );
+      }
+    }
+    if (envasePrestamoRegresa > 0 && tipoEnvaseId == null) {
+      throw ArgumentError.value(
+        tipoEnvaseId,
+        'tipoEnvaseId',
+        'Se necesita el tipo de envase para devolver el préstamo',
+      );
+    }
 
-    return _db.transaction(() async {
+    final devolucionId = await _db.transaction(() async {
       final pagoTarjeta = await (_db.select(_db.pago)..where(
         (p) => p.ventaId.equals(ventaId) & p.metodo.equals('TARJETA'),
       )).getSingleOrNull();
@@ -151,6 +218,35 @@ class DevolucionRepository {
 
       return devolucionId;
     });
+
+    // Fuera de la transacción anterior (ya confirmada): el envase que
+    // regresa se liquida con los mismos métodos que usa la ficha del
+    // cliente, en su propia transacción. Ver nota de [registrarDevolucion]
+    // sobre por qué no es un `CANCELACION` dentro de la transacción de
+    // arriba.
+    if (envaseDepositoRegresa > 0) {
+      await _envases.devolverDeposito(
+        ventaOriginalId: ventaId,
+        tipoEnvaseId: tipoEnvaseId!,
+        cantidad: envaseDepositoRegresa,
+        usuarioId: usuarioId,
+        cajaSesionId: cajaSesionId!,
+      );
+    }
+    if (envasePrestamoRegresa > 0) {
+      final venta = await (_db.select(
+        _db.venta,
+      )..where((v) => v.id.equals(ventaId))).getSingle();
+      await _envases.devolverEnvasePrestado(
+        ventaOriginalId: ventaId,
+        clienteId: venta.clienteId!,
+        tipoEnvaseId: tipoEnvaseId!,
+        cantidad: envasePrestamoRegresa,
+        usuarioId: usuarioId,
+      );
+    }
+
+    return devolucionId;
   }
 
   Future<List<DevolucionData>> listarPorVenta(int ventaId) {

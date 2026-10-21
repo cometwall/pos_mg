@@ -349,8 +349,50 @@ class Usuario extends Table with TableInfo<Usuario, UsuarioData> {
     $customConstraints: 'NOT NULL DEFAULT (datetime(\'now\'))',
     defaultValue: const CustomExpression('datetime(\'now\')'),
   );
+  static const VerificationMeta _remotoIdMeta = const VerificationMeta(
+    'remotoId',
+  );
+  late final GeneratedColumn<int> remotoId = GeneratedColumn<int>(
+    'remoto_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: '',
+  );
+  static const VerificationMeta _nombreUsuarioMeta = const VerificationMeta(
+    'nombreUsuario',
+  );
+  late final GeneratedColumn<String> nombreUsuario = GeneratedColumn<String>(
+    'nombre_usuario',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: '',
+  );
+  static const VerificationMeta _sucursalIdMeta = const VerificationMeta(
+    'sucursalId',
+  );
+  late final GeneratedColumn<int> sucursalId = GeneratedColumn<int>(
+    'sucursal_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: '',
+  );
   @override
-  List<GeneratedColumn> get $columns => [id, nombre, rol, activo, creadoEn];
+  List<GeneratedColumn> get $columns => [
+    id,
+    nombre,
+    rol,
+    activo,
+    creadoEn,
+    remotoId,
+    nombreUsuario,
+    sucursalId,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -394,6 +436,27 @@ class Usuario extends Table with TableInfo<Usuario, UsuarioData> {
         creadoEn.isAcceptableOrUnknown(data['creado_en']!, _creadoEnMeta),
       );
     }
+    if (data.containsKey('remoto_id')) {
+      context.handle(
+        _remotoIdMeta,
+        remotoId.isAcceptableOrUnknown(data['remoto_id']!, _remotoIdMeta),
+      );
+    }
+    if (data.containsKey('nombre_usuario')) {
+      context.handle(
+        _nombreUsuarioMeta,
+        nombreUsuario.isAcceptableOrUnknown(
+          data['nombre_usuario']!,
+          _nombreUsuarioMeta,
+        ),
+      );
+    }
+    if (data.containsKey('sucursal_id')) {
+      context.handle(
+        _sucursalIdMeta,
+        sucursalId.isAcceptableOrUnknown(data['sucursal_id']!, _sucursalIdMeta),
+      );
+    }
     return context;
   }
 
@@ -423,6 +486,18 @@ class Usuario extends Table with TableInfo<Usuario, UsuarioData> {
         DriftSqlType.string,
         data['${effectivePrefix}creado_en'],
       )!,
+      remotoId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}remoto_id'],
+      ),
+      nombreUsuario: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}nombre_usuario'],
+      ),
+      sucursalId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sucursal_id'],
+      ),
     );
   }
 
@@ -441,12 +516,21 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
   final String rol;
   final int activo;
   final String creadoEn;
+
+  /// v2 (login): identidad en el backend. NULL para usuarios creados
+  /// antes del login, que se conservan por las FKs de su historial.
+  final int? remotoId;
+  final String? nombreUsuario;
+  final int? sucursalId;
   const UsuarioData({
     required this.id,
     required this.nombre,
     required this.rol,
     required this.activo,
     required this.creadoEn,
+    this.remotoId,
+    this.nombreUsuario,
+    this.sucursalId,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -456,6 +540,15 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
     map['rol'] = Variable<String>(rol);
     map['activo'] = Variable<int>(activo);
     map['creado_en'] = Variable<String>(creadoEn);
+    if (!nullToAbsent || remotoId != null) {
+      map['remoto_id'] = Variable<int>(remotoId);
+    }
+    if (!nullToAbsent || nombreUsuario != null) {
+      map['nombre_usuario'] = Variable<String>(nombreUsuario);
+    }
+    if (!nullToAbsent || sucursalId != null) {
+      map['sucursal_id'] = Variable<int>(sucursalId);
+    }
     return map;
   }
 
@@ -466,6 +559,15 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
       rol: Value(rol),
       activo: Value(activo),
       creadoEn: Value(creadoEn),
+      remotoId: remotoId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remotoId),
+      nombreUsuario: nombreUsuario == null && nullToAbsent
+          ? const Value.absent()
+          : Value(nombreUsuario),
+      sucursalId: sucursalId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sucursalId),
     );
   }
 
@@ -480,6 +582,9 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
       rol: serializer.fromJson<String>(json['rol']),
       activo: serializer.fromJson<int>(json['activo']),
       creadoEn: serializer.fromJson<String>(json['creado_en']),
+      remotoId: serializer.fromJson<int?>(json['remoto_id']),
+      nombreUsuario: serializer.fromJson<String?>(json['nombre_usuario']),
+      sucursalId: serializer.fromJson<int?>(json['sucursal_id']),
     );
   }
   @override
@@ -491,6 +596,9 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
       'rol': serializer.toJson<String>(rol),
       'activo': serializer.toJson<int>(activo),
       'creado_en': serializer.toJson<String>(creadoEn),
+      'remoto_id': serializer.toJson<int?>(remotoId),
+      'nombre_usuario': serializer.toJson<String?>(nombreUsuario),
+      'sucursal_id': serializer.toJson<int?>(sucursalId),
     };
   }
 
@@ -500,12 +608,20 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
     String? rol,
     int? activo,
     String? creadoEn,
+    Value<int?> remotoId = const Value.absent(),
+    Value<String?> nombreUsuario = const Value.absent(),
+    Value<int?> sucursalId = const Value.absent(),
   }) => UsuarioData(
     id: id ?? this.id,
     nombre: nombre ?? this.nombre,
     rol: rol ?? this.rol,
     activo: activo ?? this.activo,
     creadoEn: creadoEn ?? this.creadoEn,
+    remotoId: remotoId.present ? remotoId.value : this.remotoId,
+    nombreUsuario: nombreUsuario.present
+        ? nombreUsuario.value
+        : this.nombreUsuario,
+    sucursalId: sucursalId.present ? sucursalId.value : this.sucursalId,
   );
   UsuarioData copyWithCompanion(UsuarioCompanion data) {
     return UsuarioData(
@@ -514,6 +630,13 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
       rol: data.rol.present ? data.rol.value : this.rol,
       activo: data.activo.present ? data.activo.value : this.activo,
       creadoEn: data.creadoEn.present ? data.creadoEn.value : this.creadoEn,
+      remotoId: data.remotoId.present ? data.remotoId.value : this.remotoId,
+      nombreUsuario: data.nombreUsuario.present
+          ? data.nombreUsuario.value
+          : this.nombreUsuario,
+      sucursalId: data.sucursalId.present
+          ? data.sucursalId.value
+          : this.sucursalId,
     );
   }
 
@@ -524,13 +647,25 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
           ..write('nombre: $nombre, ')
           ..write('rol: $rol, ')
           ..write('activo: $activo, ')
-          ..write('creadoEn: $creadoEn')
+          ..write('creadoEn: $creadoEn, ')
+          ..write('remotoId: $remotoId, ')
+          ..write('nombreUsuario: $nombreUsuario, ')
+          ..write('sucursalId: $sucursalId')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, nombre, rol, activo, creadoEn);
+  int get hashCode => Object.hash(
+    id,
+    nombre,
+    rol,
+    activo,
+    creadoEn,
+    remotoId,
+    nombreUsuario,
+    sucursalId,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -539,7 +674,10 @@ class UsuarioData extends DataClass implements Insertable<UsuarioData> {
           other.nombre == this.nombre &&
           other.rol == this.rol &&
           other.activo == this.activo &&
-          other.creadoEn == this.creadoEn);
+          other.creadoEn == this.creadoEn &&
+          other.remotoId == this.remotoId &&
+          other.nombreUsuario == this.nombreUsuario &&
+          other.sucursalId == this.sucursalId);
 }
 
 class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
@@ -548,12 +686,18 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
   final Value<String> rol;
   final Value<int> activo;
   final Value<String> creadoEn;
+  final Value<int?> remotoId;
+  final Value<String?> nombreUsuario;
+  final Value<int?> sucursalId;
   const UsuarioCompanion({
     this.id = const Value.absent(),
     this.nombre = const Value.absent(),
     this.rol = const Value.absent(),
     this.activo = const Value.absent(),
     this.creadoEn = const Value.absent(),
+    this.remotoId = const Value.absent(),
+    this.nombreUsuario = const Value.absent(),
+    this.sucursalId = const Value.absent(),
   });
   UsuarioCompanion.insert({
     this.id = const Value.absent(),
@@ -561,6 +705,9 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
     required String rol,
     this.activo = const Value.absent(),
     this.creadoEn = const Value.absent(),
+    this.remotoId = const Value.absent(),
+    this.nombreUsuario = const Value.absent(),
+    this.sucursalId = const Value.absent(),
   }) : nombre = Value(nombre),
        rol = Value(rol);
   static Insertable<UsuarioData> custom({
@@ -569,6 +716,9 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
     Expression<String>? rol,
     Expression<int>? activo,
     Expression<String>? creadoEn,
+    Expression<int>? remotoId,
+    Expression<String>? nombreUsuario,
+    Expression<int>? sucursalId,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -576,6 +726,9 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
       if (rol != null) 'rol': rol,
       if (activo != null) 'activo': activo,
       if (creadoEn != null) 'creado_en': creadoEn,
+      if (remotoId != null) 'remoto_id': remotoId,
+      if (nombreUsuario != null) 'nombre_usuario': nombreUsuario,
+      if (sucursalId != null) 'sucursal_id': sucursalId,
     });
   }
 
@@ -585,6 +738,9 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
     Value<String>? rol,
     Value<int>? activo,
     Value<String>? creadoEn,
+    Value<int?>? remotoId,
+    Value<String?>? nombreUsuario,
+    Value<int?>? sucursalId,
   }) {
     return UsuarioCompanion(
       id: id ?? this.id,
@@ -592,6 +748,9 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
       rol: rol ?? this.rol,
       activo: activo ?? this.activo,
       creadoEn: creadoEn ?? this.creadoEn,
+      remotoId: remotoId ?? this.remotoId,
+      nombreUsuario: nombreUsuario ?? this.nombreUsuario,
+      sucursalId: sucursalId ?? this.sucursalId,
     );
   }
 
@@ -613,6 +772,15 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
     if (creadoEn.present) {
       map['creado_en'] = Variable<String>(creadoEn.value);
     }
+    if (remotoId.present) {
+      map['remoto_id'] = Variable<int>(remotoId.value);
+    }
+    if (nombreUsuario.present) {
+      map['nombre_usuario'] = Variable<String>(nombreUsuario.value);
+    }
+    if (sucursalId.present) {
+      map['sucursal_id'] = Variable<int>(sucursalId.value);
+    }
     return map;
   }
 
@@ -623,7 +791,760 @@ class UsuarioCompanion extends UpdateCompanion<UsuarioData> {
           ..write('nombre: $nombre, ')
           ..write('rol: $rol, ')
           ..write('activo: $activo, ')
-          ..write('creadoEn: $creadoEn')
+          ..write('creadoEn: $creadoEn, ')
+          ..write('remotoId: $remotoId, ')
+          ..write('nombreUsuario: $nombreUsuario, ')
+          ..write('sucursalId: $sucursalId')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class CredencialOffline extends Table
+    with TableInfo<CredencialOffline, CredencialOfflineData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  CredencialOffline(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _usuarioIdMeta = const VerificationMeta(
+    'usuarioId',
+  );
+  late final GeneratedColumn<int> usuarioId = GeneratedColumn<int>(
+    'usuario_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'PRIMARY KEY REFERENCES usuario(id)',
+  );
+  static const VerificationMeta _hashMeta = const VerificationMeta('hash');
+  late final GeneratedColumn<Uint8List> hash = GeneratedColumn<Uint8List>(
+    'hash',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  static const VerificationMeta _saltMeta = const VerificationMeta('salt');
+  late final GeneratedColumn<Uint8List> salt = GeneratedColumn<Uint8List>(
+    'salt',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  static const VerificationMeta _iteracionesMeta = const VerificationMeta(
+    'iteraciones',
+  );
+  late final GeneratedColumn<int> iteraciones = GeneratedColumn<int>(
+    'iteraciones',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL CHECK (iteraciones > 0)',
+  );
+  static const VerificationMeta _actualizadoEnMeta = const VerificationMeta(
+    'actualizadoEn',
+  );
+  late final GeneratedColumn<String> actualizadoEn = GeneratedColumn<String>(
+    'actualizado_en',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT (datetime(\'now\'))',
+    defaultValue: const CustomExpression('datetime(\'now\')'),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    usuarioId,
+    hash,
+    salt,
+    iteraciones,
+    actualizadoEn,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'credencial_offline';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CredencialOfflineData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('usuario_id')) {
+      context.handle(
+        _usuarioIdMeta,
+        usuarioId.isAcceptableOrUnknown(data['usuario_id']!, _usuarioIdMeta),
+      );
+    }
+    if (data.containsKey('hash')) {
+      context.handle(
+        _hashMeta,
+        hash.isAcceptableOrUnknown(data['hash']!, _hashMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_hashMeta);
+    }
+    if (data.containsKey('salt')) {
+      context.handle(
+        _saltMeta,
+        salt.isAcceptableOrUnknown(data['salt']!, _saltMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_saltMeta);
+    }
+    if (data.containsKey('iteraciones')) {
+      context.handle(
+        _iteracionesMeta,
+        iteraciones.isAcceptableOrUnknown(
+          data['iteraciones']!,
+          _iteracionesMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_iteracionesMeta);
+    }
+    if (data.containsKey('actualizado_en')) {
+      context.handle(
+        _actualizadoEnMeta,
+        actualizadoEn.isAcceptableOrUnknown(
+          data['actualizado_en']!,
+          _actualizadoEnMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {usuarioId};
+  @override
+  CredencialOfflineData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CredencialOfflineData(
+      usuarioId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}usuario_id'],
+      )!,
+      hash: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}hash'],
+      )!,
+      salt: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}salt'],
+      )!,
+      iteraciones: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}iteraciones'],
+      )!,
+      actualizadoEn: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}actualizado_en'],
+      )!,
+    );
+  }
+
+  @override
+  CredencialOffline createAlias(String alias) {
+    return CredencialOffline(attachedDatabase, alias);
+  }
+
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class CredencialOfflineData extends DataClass
+    implements Insertable<CredencialOfflineData> {
+  final int usuarioId;
+  final Uint8List hash;
+  final Uint8List salt;
+  final int iteraciones;
+  final String actualizadoEn;
+  const CredencialOfflineData({
+    required this.usuarioId,
+    required this.hash,
+    required this.salt,
+    required this.iteraciones,
+    required this.actualizadoEn,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['usuario_id'] = Variable<int>(usuarioId);
+    map['hash'] = Variable<Uint8List>(hash);
+    map['salt'] = Variable<Uint8List>(salt);
+    map['iteraciones'] = Variable<int>(iteraciones);
+    map['actualizado_en'] = Variable<String>(actualizadoEn);
+    return map;
+  }
+
+  CredencialOfflineCompanion toCompanion(bool nullToAbsent) {
+    return CredencialOfflineCompanion(
+      usuarioId: Value(usuarioId),
+      hash: Value(hash),
+      salt: Value(salt),
+      iteraciones: Value(iteraciones),
+      actualizadoEn: Value(actualizadoEn),
+    );
+  }
+
+  factory CredencialOfflineData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CredencialOfflineData(
+      usuarioId: serializer.fromJson<int>(json['usuario_id']),
+      hash: serializer.fromJson<Uint8List>(json['hash']),
+      salt: serializer.fromJson<Uint8List>(json['salt']),
+      iteraciones: serializer.fromJson<int>(json['iteraciones']),
+      actualizadoEn: serializer.fromJson<String>(json['actualizado_en']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'usuario_id': serializer.toJson<int>(usuarioId),
+      'hash': serializer.toJson<Uint8List>(hash),
+      'salt': serializer.toJson<Uint8List>(salt),
+      'iteraciones': serializer.toJson<int>(iteraciones),
+      'actualizado_en': serializer.toJson<String>(actualizadoEn),
+    };
+  }
+
+  CredencialOfflineData copyWith({
+    int? usuarioId,
+    Uint8List? hash,
+    Uint8List? salt,
+    int? iteraciones,
+    String? actualizadoEn,
+  }) => CredencialOfflineData(
+    usuarioId: usuarioId ?? this.usuarioId,
+    hash: hash ?? this.hash,
+    salt: salt ?? this.salt,
+    iteraciones: iteraciones ?? this.iteraciones,
+    actualizadoEn: actualizadoEn ?? this.actualizadoEn,
+  );
+  CredencialOfflineData copyWithCompanion(CredencialOfflineCompanion data) {
+    return CredencialOfflineData(
+      usuarioId: data.usuarioId.present ? data.usuarioId.value : this.usuarioId,
+      hash: data.hash.present ? data.hash.value : this.hash,
+      salt: data.salt.present ? data.salt.value : this.salt,
+      iteraciones: data.iteraciones.present
+          ? data.iteraciones.value
+          : this.iteraciones,
+      actualizadoEn: data.actualizadoEn.present
+          ? data.actualizadoEn.value
+          : this.actualizadoEn,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CredencialOfflineData(')
+          ..write('usuarioId: $usuarioId, ')
+          ..write('hash: $hash, ')
+          ..write('salt: $salt, ')
+          ..write('iteraciones: $iteraciones, ')
+          ..write('actualizadoEn: $actualizadoEn')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    usuarioId,
+    $driftBlobEquality.hash(hash),
+    $driftBlobEquality.hash(salt),
+    iteraciones,
+    actualizadoEn,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CredencialOfflineData &&
+          other.usuarioId == this.usuarioId &&
+          $driftBlobEquality.equals(other.hash, this.hash) &&
+          $driftBlobEquality.equals(other.salt, this.salt) &&
+          other.iteraciones == this.iteraciones &&
+          other.actualizadoEn == this.actualizadoEn);
+}
+
+class CredencialOfflineCompanion
+    extends UpdateCompanion<CredencialOfflineData> {
+  final Value<int> usuarioId;
+  final Value<Uint8List> hash;
+  final Value<Uint8List> salt;
+  final Value<int> iteraciones;
+  final Value<String> actualizadoEn;
+  const CredencialOfflineCompanion({
+    this.usuarioId = const Value.absent(),
+    this.hash = const Value.absent(),
+    this.salt = const Value.absent(),
+    this.iteraciones = const Value.absent(),
+    this.actualizadoEn = const Value.absent(),
+  });
+  CredencialOfflineCompanion.insert({
+    this.usuarioId = const Value.absent(),
+    required Uint8List hash,
+    required Uint8List salt,
+    required int iteraciones,
+    this.actualizadoEn = const Value.absent(),
+  }) : hash = Value(hash),
+       salt = Value(salt),
+       iteraciones = Value(iteraciones);
+  static Insertable<CredencialOfflineData> custom({
+    Expression<int>? usuarioId,
+    Expression<Uint8List>? hash,
+    Expression<Uint8List>? salt,
+    Expression<int>? iteraciones,
+    Expression<String>? actualizadoEn,
+  }) {
+    return RawValuesInsertable({
+      if (usuarioId != null) 'usuario_id': usuarioId,
+      if (hash != null) 'hash': hash,
+      if (salt != null) 'salt': salt,
+      if (iteraciones != null) 'iteraciones': iteraciones,
+      if (actualizadoEn != null) 'actualizado_en': actualizadoEn,
+    });
+  }
+
+  CredencialOfflineCompanion copyWith({
+    Value<int>? usuarioId,
+    Value<Uint8List>? hash,
+    Value<Uint8List>? salt,
+    Value<int>? iteraciones,
+    Value<String>? actualizadoEn,
+  }) {
+    return CredencialOfflineCompanion(
+      usuarioId: usuarioId ?? this.usuarioId,
+      hash: hash ?? this.hash,
+      salt: salt ?? this.salt,
+      iteraciones: iteraciones ?? this.iteraciones,
+      actualizadoEn: actualizadoEn ?? this.actualizadoEn,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (usuarioId.present) {
+      map['usuario_id'] = Variable<int>(usuarioId.value);
+    }
+    if (hash.present) {
+      map['hash'] = Variable<Uint8List>(hash.value);
+    }
+    if (salt.present) {
+      map['salt'] = Variable<Uint8List>(salt.value);
+    }
+    if (iteraciones.present) {
+      map['iteraciones'] = Variable<int>(iteraciones.value);
+    }
+    if (actualizadoEn.present) {
+      map['actualizado_en'] = Variable<String>(actualizadoEn.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CredencialOfflineCompanion(')
+          ..write('usuarioId: $usuarioId, ')
+          ..write('hash: $hash, ')
+          ..write('salt: $salt, ')
+          ..write('iteraciones: $iteraciones, ')
+          ..write('actualizadoEn: $actualizadoEn')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class DispositivoConfig extends Table
+    with TableInfo<DispositivoConfig, DispositivoConfigData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  DispositivoConfig(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'PRIMARY KEY CHECK (id = 1)',
+  );
+  static const VerificationMeta _sucursalIdMeta = const VerificationMeta(
+    'sucursalId',
+  );
+  late final GeneratedColumn<int> sucursalId = GeneratedColumn<int>(
+    'sucursal_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  static const VerificationMeta _sucursalNombreMeta = const VerificationMeta(
+    'sucursalNombre',
+  );
+  late final GeneratedColumn<String> sucursalNombre = GeneratedColumn<String>(
+    'sucursal_nombre',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: '',
+  );
+  static const VerificationMeta _vinculadoPorUsuarioIdMeta =
+      const VerificationMeta('vinculadoPorUsuarioId');
+  late final GeneratedColumn<int> vinculadoPorUsuarioId = GeneratedColumn<int>(
+    'vinculado_por_usuario_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL REFERENCES usuario(id)',
+  );
+  static const VerificationMeta _vinculadoEnMeta = const VerificationMeta(
+    'vinculadoEn',
+  );
+  late final GeneratedColumn<String> vinculadoEn = GeneratedColumn<String>(
+    'vinculado_en',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT (datetime(\'now\'))',
+    defaultValue: const CustomExpression('datetime(\'now\')'),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    sucursalId,
+    sucursalNombre,
+    vinculadoPorUsuarioId,
+    vinculadoEn,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'dispositivo_config';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DispositivoConfigData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('sucursal_id')) {
+      context.handle(
+        _sucursalIdMeta,
+        sucursalId.isAcceptableOrUnknown(data['sucursal_id']!, _sucursalIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_sucursalIdMeta);
+    }
+    if (data.containsKey('sucursal_nombre')) {
+      context.handle(
+        _sucursalNombreMeta,
+        sucursalNombre.isAcceptableOrUnknown(
+          data['sucursal_nombre']!,
+          _sucursalNombreMeta,
+        ),
+      );
+    }
+    if (data.containsKey('vinculado_por_usuario_id')) {
+      context.handle(
+        _vinculadoPorUsuarioIdMeta,
+        vinculadoPorUsuarioId.isAcceptableOrUnknown(
+          data['vinculado_por_usuario_id']!,
+          _vinculadoPorUsuarioIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_vinculadoPorUsuarioIdMeta);
+    }
+    if (data.containsKey('vinculado_en')) {
+      context.handle(
+        _vinculadoEnMeta,
+        vinculadoEn.isAcceptableOrUnknown(
+          data['vinculado_en']!,
+          _vinculadoEnMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  DispositivoConfigData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DispositivoConfigData(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      sucursalId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sucursal_id'],
+      )!,
+      sucursalNombre: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sucursal_nombre'],
+      ),
+      vinculadoPorUsuarioId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}vinculado_por_usuario_id'],
+      )!,
+      vinculadoEn: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}vinculado_en'],
+      )!,
+    );
+  }
+
+  @override
+  DispositivoConfig createAlias(String alias) {
+    return DispositivoConfig(attachedDatabase, alias);
+  }
+
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class DispositivoConfigData extends DataClass
+    implements Insertable<DispositivoConfigData> {
+  final int id;
+  final int sucursalId;
+  final String? sucursalNombre;
+  final int vinculadoPorUsuarioId;
+  final String vinculadoEn;
+  const DispositivoConfigData({
+    required this.id,
+    required this.sucursalId,
+    this.sucursalNombre,
+    required this.vinculadoPorUsuarioId,
+    required this.vinculadoEn,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['sucursal_id'] = Variable<int>(sucursalId);
+    if (!nullToAbsent || sucursalNombre != null) {
+      map['sucursal_nombre'] = Variable<String>(sucursalNombre);
+    }
+    map['vinculado_por_usuario_id'] = Variable<int>(vinculadoPorUsuarioId);
+    map['vinculado_en'] = Variable<String>(vinculadoEn);
+    return map;
+  }
+
+  DispositivoConfigCompanion toCompanion(bool nullToAbsent) {
+    return DispositivoConfigCompanion(
+      id: Value(id),
+      sucursalId: Value(sucursalId),
+      sucursalNombre: sucursalNombre == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sucursalNombre),
+      vinculadoPorUsuarioId: Value(vinculadoPorUsuarioId),
+      vinculadoEn: Value(vinculadoEn),
+    );
+  }
+
+  factory DispositivoConfigData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DispositivoConfigData(
+      id: serializer.fromJson<int>(json['id']),
+      sucursalId: serializer.fromJson<int>(json['sucursal_id']),
+      sucursalNombre: serializer.fromJson<String?>(json['sucursal_nombre']),
+      vinculadoPorUsuarioId: serializer.fromJson<int>(
+        json['vinculado_por_usuario_id'],
+      ),
+      vinculadoEn: serializer.fromJson<String>(json['vinculado_en']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'sucursal_id': serializer.toJson<int>(sucursalId),
+      'sucursal_nombre': serializer.toJson<String?>(sucursalNombre),
+      'vinculado_por_usuario_id': serializer.toJson<int>(vinculadoPorUsuarioId),
+      'vinculado_en': serializer.toJson<String>(vinculadoEn),
+    };
+  }
+
+  DispositivoConfigData copyWith({
+    int? id,
+    int? sucursalId,
+    Value<String?> sucursalNombre = const Value.absent(),
+    int? vinculadoPorUsuarioId,
+    String? vinculadoEn,
+  }) => DispositivoConfigData(
+    id: id ?? this.id,
+    sucursalId: sucursalId ?? this.sucursalId,
+    sucursalNombre: sucursalNombre.present
+        ? sucursalNombre.value
+        : this.sucursalNombre,
+    vinculadoPorUsuarioId: vinculadoPorUsuarioId ?? this.vinculadoPorUsuarioId,
+    vinculadoEn: vinculadoEn ?? this.vinculadoEn,
+  );
+  DispositivoConfigData copyWithCompanion(DispositivoConfigCompanion data) {
+    return DispositivoConfigData(
+      id: data.id.present ? data.id.value : this.id,
+      sucursalId: data.sucursalId.present
+          ? data.sucursalId.value
+          : this.sucursalId,
+      sucursalNombre: data.sucursalNombre.present
+          ? data.sucursalNombre.value
+          : this.sucursalNombre,
+      vinculadoPorUsuarioId: data.vinculadoPorUsuarioId.present
+          ? data.vinculadoPorUsuarioId.value
+          : this.vinculadoPorUsuarioId,
+      vinculadoEn: data.vinculadoEn.present
+          ? data.vinculadoEn.value
+          : this.vinculadoEn,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DispositivoConfigData(')
+          ..write('id: $id, ')
+          ..write('sucursalId: $sucursalId, ')
+          ..write('sucursalNombre: $sucursalNombre, ')
+          ..write('vinculadoPorUsuarioId: $vinculadoPorUsuarioId, ')
+          ..write('vinculadoEn: $vinculadoEn')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    sucursalId,
+    sucursalNombre,
+    vinculadoPorUsuarioId,
+    vinculadoEn,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DispositivoConfigData &&
+          other.id == this.id &&
+          other.sucursalId == this.sucursalId &&
+          other.sucursalNombre == this.sucursalNombre &&
+          other.vinculadoPorUsuarioId == this.vinculadoPorUsuarioId &&
+          other.vinculadoEn == this.vinculadoEn);
+}
+
+class DispositivoConfigCompanion
+    extends UpdateCompanion<DispositivoConfigData> {
+  final Value<int> id;
+  final Value<int> sucursalId;
+  final Value<String?> sucursalNombre;
+  final Value<int> vinculadoPorUsuarioId;
+  final Value<String> vinculadoEn;
+  const DispositivoConfigCompanion({
+    this.id = const Value.absent(),
+    this.sucursalId = const Value.absent(),
+    this.sucursalNombre = const Value.absent(),
+    this.vinculadoPorUsuarioId = const Value.absent(),
+    this.vinculadoEn = const Value.absent(),
+  });
+  DispositivoConfigCompanion.insert({
+    this.id = const Value.absent(),
+    required int sucursalId,
+    this.sucursalNombre = const Value.absent(),
+    required int vinculadoPorUsuarioId,
+    this.vinculadoEn = const Value.absent(),
+  }) : sucursalId = Value(sucursalId),
+       vinculadoPorUsuarioId = Value(vinculadoPorUsuarioId);
+  static Insertable<DispositivoConfigData> custom({
+    Expression<int>? id,
+    Expression<int>? sucursalId,
+    Expression<String>? sucursalNombre,
+    Expression<int>? vinculadoPorUsuarioId,
+    Expression<String>? vinculadoEn,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (sucursalId != null) 'sucursal_id': sucursalId,
+      if (sucursalNombre != null) 'sucursal_nombre': sucursalNombre,
+      if (vinculadoPorUsuarioId != null)
+        'vinculado_por_usuario_id': vinculadoPorUsuarioId,
+      if (vinculadoEn != null) 'vinculado_en': vinculadoEn,
+    });
+  }
+
+  DispositivoConfigCompanion copyWith({
+    Value<int>? id,
+    Value<int>? sucursalId,
+    Value<String?>? sucursalNombre,
+    Value<int>? vinculadoPorUsuarioId,
+    Value<String>? vinculadoEn,
+  }) {
+    return DispositivoConfigCompanion(
+      id: id ?? this.id,
+      sucursalId: sucursalId ?? this.sucursalId,
+      sucursalNombre: sucursalNombre ?? this.sucursalNombre,
+      vinculadoPorUsuarioId:
+          vinculadoPorUsuarioId ?? this.vinculadoPorUsuarioId,
+      vinculadoEn: vinculadoEn ?? this.vinculadoEn,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (sucursalId.present) {
+      map['sucursal_id'] = Variable<int>(sucursalId.value);
+    }
+    if (sucursalNombre.present) {
+      map['sucursal_nombre'] = Variable<String>(sucursalNombre.value);
+    }
+    if (vinculadoPorUsuarioId.present) {
+      map['vinculado_por_usuario_id'] = Variable<int>(
+        vinculadoPorUsuarioId.value,
+      );
+    }
+    if (vinculadoEn.present) {
+      map['vinculado_en'] = Variable<String>(vinculadoEn.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DispositivoConfigCompanion(')
+          ..write('id: $id, ')
+          ..write('sucursalId: $sucursalId, ')
+          ..write('sucursalNombre: $sucursalNombre, ')
+          ..write('vinculadoPorUsuarioId: $vinculadoPorUsuarioId, ')
+          ..write('vinculadoEn: $vinculadoEn')
           ..write(')'))
         .toString();
   }
@@ -10845,6 +11766,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final Terminal terminal = Terminal(this);
   late final Usuario usuario = Usuario(this);
+  late final Index uqUsuarioRemotoId = Index(
+    'uq_usuario_remoto_id',
+    'CREATE UNIQUE INDEX uq_usuario_remoto_id ON usuario (remoto_id) WHERE remoto_id IS NOT NULL',
+  );
+  late final Index uqUsuarioNombreUsuario = Index(
+    'uq_usuario_nombre_usuario',
+    'CREATE UNIQUE INDEX uq_usuario_nombre_usuario ON usuario (nombre_usuario) WHERE nombre_usuario IS NOT NULL',
+  );
+  late final CredencialOffline credencialOffline = CredencialOffline(this);
+  late final DispositivoConfig dispositivoConfig = DispositivoConfig(this);
   late final CajaSesion cajaSesion = CajaSesion(this);
   late final Index idxCajaTerminal = Index(
     'idx_caja_terminal',
@@ -11178,6 +12109,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     terminal,
     usuario,
+    uqUsuarioRemotoId,
+    uqUsuarioNombreUsuario,
+    credencialOffline,
+    dispositivoConfig,
     cajaSesion,
     idxCajaTerminal,
     idxCajaUnicaAbierta,
@@ -12094,6 +13029,9 @@ typedef $UsuarioCreateCompanionBuilder = UsuarioCompanion Function({
   required String rol,
   Value<int> activo,
   Value<String> creadoEn,
+  Value<int?> remotoId,
+  Value<String?> nombreUsuario,
+  Value<int?> sucursalId,
 });
 typedef $UsuarioUpdateCompanionBuilder = UsuarioCompanion Function({
   Value<int> id,
@@ -12101,11 +13039,56 @@ typedef $UsuarioUpdateCompanionBuilder = UsuarioCompanion Function({
   Value<String> rol,
   Value<int> activo,
   Value<String> creadoEn,
+  Value<int?> remotoId,
+  Value<String?> nombreUsuario,
+  Value<int?> sucursalId,
 });
 
 final class $UsuarioReferences
     extends BaseReferences<_$AppDatabase, Usuario, UsuarioData> {
   $UsuarioReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static MultiTypedResultKey<CredencialOffline, List<CredencialOfflineData>>
+  _credencialOfflineRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.credencialOffline,
+        aliasName: 'usuario__id__credencial_offline__usuario_id',
+      );
+
+  $CredencialOfflineProcessedTableManager get credencialOfflineRefs {
+    final manager = $CredencialOfflineTableManager(
+      $_db,
+      $_db.credencialOffline,
+    ).filter((f) => f.usuarioId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _credencialOfflineRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<DispositivoConfig, List<DispositivoConfigData>>
+  _dispositivoConfigRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.dispositivoConfig,
+        aliasName: 'usuario__id__dispositivo_config__vinculado_por_usuario_id',
+      );
+
+  $DispositivoConfigProcessedTableManager get dispositivoConfigRefs {
+    final manager = $DispositivoConfigTableManager($_db, $_db.dispositivoConfig)
+        .filter(
+          (f) => f.vinculadoPorUsuarioId.id.sqlEquals($_itemColumn<int>('id')!),
+        );
+
+    final cache = $_typedResult.readTableOrNull(
+      _dispositivoConfigRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
 
   static MultiTypedResultKey<
     MovimientoInventario,
@@ -12325,6 +13308,71 @@ class $UsuarioFilterComposer extends Composer<_$AppDatabase, Usuario> {
     column: $table.creadoEn,
     builder: (column) => ColumnFilters(column),
   );
+
+  ColumnFilters<int> get remotoId => $composableBuilder(
+    column: $table.remotoId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get nombreUsuario => $composableBuilder(
+    column: $table.nombreUsuario,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sucursalId => $composableBuilder(
+    column: $table.sucursalId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  Expression<bool> credencialOfflineRefs(
+    Expression<bool> Function($CredencialOfflineFilterComposer f) f,
+  ) {
+    final $CredencialOfflineFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.credencialOffline,
+      getReferencedColumn: (t) => t.usuarioId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $CredencialOfflineFilterComposer(
+            $db: $db,
+            $table: $db.credencialOffline,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> dispositivoConfigRefs(
+    Expression<bool> Function($DispositivoConfigFilterComposer f) f,
+  ) {
+    final $DispositivoConfigFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.dispositivoConfig,
+      getReferencedColumn: (t) => t.vinculadoPorUsuarioId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $DispositivoConfigFilterComposer(
+            $db: $db,
+            $table: $db.dispositivoConfig,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 
   Expression<bool> movimientoInventarioRefs(
     Expression<bool> Function($MovimientoInventarioFilterComposer f) f,
@@ -12584,6 +13632,21 @@ class $UsuarioOrderingComposer extends Composer<_$AppDatabase, Usuario> {
     column: $table.creadoEn,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get remotoId => $composableBuilder(
+    column: $table.remotoId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get nombreUsuario => $composableBuilder(
+    column: $table.nombreUsuario,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sucursalId => $composableBuilder(
+    column: $table.sucursalId,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $UsuarioAnnotationComposer extends Composer<_$AppDatabase, Usuario> {
@@ -12608,6 +13671,69 @@ class $UsuarioAnnotationComposer extends Composer<_$AppDatabase, Usuario> {
 
   GeneratedColumn<String> get creadoEn =>
       $composableBuilder(column: $table.creadoEn, builder: (column) => column);
+
+  GeneratedColumn<int> get remotoId =>
+      $composableBuilder(column: $table.remotoId, builder: (column) => column);
+
+  GeneratedColumn<String> get nombreUsuario => $composableBuilder(
+    column: $table.nombreUsuario,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sucursalId => $composableBuilder(
+    column: $table.sucursalId,
+    builder: (column) => column,
+  );
+
+  Expression<T> credencialOfflineRefs<T extends Object>(
+    Expression<T> Function($CredencialOfflineAnnotationComposer a) f,
+  ) {
+    final $CredencialOfflineAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.credencialOffline,
+      getReferencedColumn: (t) => t.usuarioId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $CredencialOfflineAnnotationComposer(
+            $db: $db,
+            $table: $db.credencialOffline,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<T> dispositivoConfigRefs<T extends Object>(
+    Expression<T> Function($DispositivoConfigAnnotationComposer a) f,
+  ) {
+    final $DispositivoConfigAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.dispositivoConfig,
+      getReferencedColumn: (t) => t.vinculadoPorUsuarioId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $DispositivoConfigAnnotationComposer(
+            $db: $db,
+            $table: $db.dispositivoConfig,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 
   Expression<T> movimientoInventarioRefs<T extends Object>(
     Expression<T> Function($MovimientoInventarioAnnotationComposer a) f,
@@ -12850,6 +13976,8 @@ class $UsuarioTableManager
           (UsuarioData, $UsuarioReferences),
           UsuarioData,
           PrefetchHooks Function({
+            bool credencialOfflineRefs,
+            bool dispositivoConfigRefs,
             bool movimientoInventarioRefs,
             bool compraRefs,
             bool ventaRefs,
@@ -12879,12 +14007,18 @@ class $UsuarioTableManager
                 Value<String> rol = const Value.absent(),
                 Value<int> activo = const Value.absent(),
                 Value<String> creadoEn = const Value.absent(),
+                Value<int?> remotoId = const Value.absent(),
+                Value<String?> nombreUsuario = const Value.absent(),
+                Value<int?> sucursalId = const Value.absent(),
               }) => UsuarioCompanion(
                 id: id,
                 nombre: nombre,
                 rol: rol,
                 activo: activo,
                 creadoEn: creadoEn,
+                remotoId: remotoId,
+                nombreUsuario: nombreUsuario,
+                sucursalId: sucursalId,
               ),
           createCompanionCallback:
               ({
@@ -12893,12 +14027,18 @@ class $UsuarioTableManager
                 required String rol,
                 Value<int> activo = const Value.absent(),
                 Value<String> creadoEn = const Value.absent(),
+                Value<int?> remotoId = const Value.absent(),
+                Value<String?> nombreUsuario = const Value.absent(),
+                Value<int?> sucursalId = const Value.absent(),
               }) => UsuarioCompanion.insert(
                 id: id,
                 nombre: nombre,
                 rol: rol,
                 activo: activo,
                 creadoEn: creadoEn,
+                remotoId: remotoId,
+                nombreUsuario: nombreUsuario,
+                sucursalId: sucursalId,
               ),
           withReferenceMapper: (p0) => p0
               .map(
@@ -12910,6 +14050,8 @@ class $UsuarioTableManager
               .toList(),
           prefetchHooksCallback:
               ({
+                credencialOfflineRefs = false,
+                dispositivoConfigRefs = false,
                 movimientoInventarioRefs = false,
                 compraRefs = false,
                 ventaRefs = false,
@@ -12923,6 +14065,8 @@ class $UsuarioTableManager
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
+                    if (credencialOfflineRefs) db.credencialOffline,
+                    if (dispositivoConfigRefs) db.dispositivoConfig,
                     if (movimientoInventarioRefs) db.movimientoInventario,
                     if (compraRefs) db.compra,
                     if (ventaRefs) db.venta,
@@ -12936,6 +14080,46 @@ class $UsuarioTableManager
                   addJoins: null,
                   getPrefetchedDataCallback: (items) async {
                     return [
+                      if (credencialOfflineRefs)
+                        await $_getPrefetchedData<
+                          UsuarioData,
+                          Usuario,
+                          CredencialOfflineData
+                        >(
+                          currentTable: table,
+                          referencedTable: $UsuarioReferences
+                              ._credencialOfflineRefsTable(db),
+                          managerFromTypedResult: (p0) => $UsuarioReferences(
+                            db,
+                            table,
+                            p0,
+                          ).credencialOfflineRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.usuarioId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (dispositivoConfigRefs)
+                        await $_getPrefetchedData<
+                          UsuarioData,
+                          Usuario,
+                          DispositivoConfigData
+                        >(
+                          currentTable: table,
+                          referencedTable: $UsuarioReferences
+                              ._dispositivoConfigRefsTable(db),
+                          managerFromTypedResult: (p0) => $UsuarioReferences(
+                            db,
+                            table,
+                            p0,
+                          ).dispositivoConfigRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.vinculadoPorUsuarioId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                       if (movimientoInventarioRefs)
                         await $_getPrefetchedData<
                           UsuarioData,
@@ -13130,6 +14314,8 @@ typedef $UsuarioProcessedTableManager =
       (UsuarioData, $UsuarioReferences),
       UsuarioData,
       PrefetchHooks Function({
+        bool credencialOfflineRefs,
+        bool dispositivoConfigRefs,
         bool movimientoInventarioRefs,
         bool compraRefs,
         bool ventaRefs,
@@ -13140,6 +14326,646 @@ typedef $UsuarioProcessedTableManager =
         bool devolucionRefs,
         bool movimientoCajaRefs,
       })
+    >;
+typedef $CredencialOfflineCreateCompanionBuilder =
+    CredencialOfflineCompanion Function({
+      Value<int> usuarioId,
+      required Uint8List hash,
+      required Uint8List salt,
+      required int iteraciones,
+      Value<String> actualizadoEn,
+    });
+typedef $CredencialOfflineUpdateCompanionBuilder =
+    CredencialOfflineCompanion Function({
+      Value<int> usuarioId,
+      Value<Uint8List> hash,
+      Value<Uint8List> salt,
+      Value<int> iteraciones,
+      Value<String> actualizadoEn,
+    });
+
+final class $CredencialOfflineReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          CredencialOffline,
+          CredencialOfflineData
+        > {
+  $CredencialOfflineReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static Usuario _usuarioIdTable(_$AppDatabase db) =>
+      db.usuario.createAlias('credencial_offline__usuario_id__usuario__id');
+
+  $UsuarioProcessedTableManager get usuarioId {
+    final $_column = $_itemColumn<int>('usuario_id')!;
+
+    final manager = $UsuarioTableManager(
+      $_db,
+      $_db.usuario,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_usuarioIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $CredencialOfflineFilterComposer
+    extends Composer<_$AppDatabase, CredencialOffline> {
+  $CredencialOfflineFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<Uint8List> get hash => $composableBuilder(
+    column: $table.hash,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get salt => $composableBuilder(
+    column: $table.salt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get iteraciones => $composableBuilder(
+    column: $table.iteraciones,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get actualizadoEn => $composableBuilder(
+    column: $table.actualizadoEn,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $UsuarioFilterComposer get usuarioId {
+    final $UsuarioFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.usuarioId,
+      referencedTable: $db.usuario,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $UsuarioFilterComposer(
+            $db: $db,
+            $table: $db.usuario,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $CredencialOfflineOrderingComposer
+    extends Composer<_$AppDatabase, CredencialOffline> {
+  $CredencialOfflineOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<Uint8List> get hash => $composableBuilder(
+    column: $table.hash,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get salt => $composableBuilder(
+    column: $table.salt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get iteraciones => $composableBuilder(
+    column: $table.iteraciones,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get actualizadoEn => $composableBuilder(
+    column: $table.actualizadoEn,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $UsuarioOrderingComposer get usuarioId {
+    final $UsuarioOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.usuarioId,
+      referencedTable: $db.usuario,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $UsuarioOrderingComposer(
+            $db: $db,
+            $table: $db.usuario,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $CredencialOfflineAnnotationComposer
+    extends Composer<_$AppDatabase, CredencialOffline> {
+  $CredencialOfflineAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<Uint8List> get hash =>
+      $composableBuilder(column: $table.hash, builder: (column) => column);
+
+  GeneratedColumn<Uint8List> get salt =>
+      $composableBuilder(column: $table.salt, builder: (column) => column);
+
+  GeneratedColumn<int> get iteraciones => $composableBuilder(
+    column: $table.iteraciones,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get actualizadoEn => $composableBuilder(
+    column: $table.actualizadoEn,
+    builder: (column) => column,
+  );
+
+  $UsuarioAnnotationComposer get usuarioId {
+    final $UsuarioAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.usuarioId,
+      referencedTable: $db.usuario,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $UsuarioAnnotationComposer(
+            $db: $db,
+            $table: $db.usuario,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $CredencialOfflineTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          CredencialOffline,
+          CredencialOfflineData,
+          $CredencialOfflineFilterComposer,
+          $CredencialOfflineOrderingComposer,
+          $CredencialOfflineAnnotationComposer,
+          $CredencialOfflineCreateCompanionBuilder,
+          $CredencialOfflineUpdateCompanionBuilder,
+          (CredencialOfflineData, $CredencialOfflineReferences),
+          CredencialOfflineData,
+          PrefetchHooks Function({bool usuarioId})
+        > {
+  $CredencialOfflineTableManager(_$AppDatabase db, CredencialOffline table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $CredencialOfflineFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $CredencialOfflineOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $CredencialOfflineAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> usuarioId = const Value.absent(),
+                Value<Uint8List> hash = const Value.absent(),
+                Value<Uint8List> salt = const Value.absent(),
+                Value<int> iteraciones = const Value.absent(),
+                Value<String> actualizadoEn = const Value.absent(),
+              }) => CredencialOfflineCompanion(
+                usuarioId: usuarioId,
+                hash: hash,
+                salt: salt,
+                iteraciones: iteraciones,
+                actualizadoEn: actualizadoEn,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> usuarioId = const Value.absent(),
+                required Uint8List hash,
+                required Uint8List salt,
+                required int iteraciones,
+                Value<String> actualizadoEn = const Value.absent(),
+              }) => CredencialOfflineCompanion.insert(
+                usuarioId: usuarioId,
+                hash: hash,
+                salt: salt,
+                iteraciones: iteraciones,
+                actualizadoEn: actualizadoEn,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<CredencialOffline, CredencialOfflineData>(table),
+                  $CredencialOfflineReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({usuarioId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (usuarioId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.usuarioId,
+                        referencedTable: $CredencialOfflineReferences
+                            ._usuarioIdTable(db),
+                        referencedColumn: $CredencialOfflineReferences
+                            ._usuarioIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $CredencialOfflineProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      CredencialOffline,
+      CredencialOfflineData,
+      $CredencialOfflineFilterComposer,
+      $CredencialOfflineOrderingComposer,
+      $CredencialOfflineAnnotationComposer,
+      $CredencialOfflineCreateCompanionBuilder,
+      $CredencialOfflineUpdateCompanionBuilder,
+      (CredencialOfflineData, $CredencialOfflineReferences),
+      CredencialOfflineData,
+      PrefetchHooks Function({bool usuarioId})
+    >;
+typedef $DispositivoConfigCreateCompanionBuilder =
+    DispositivoConfigCompanion Function({
+      Value<int> id,
+      required int sucursalId,
+      Value<String?> sucursalNombre,
+      required int vinculadoPorUsuarioId,
+      Value<String> vinculadoEn,
+    });
+typedef $DispositivoConfigUpdateCompanionBuilder =
+    DispositivoConfigCompanion Function({
+      Value<int> id,
+      Value<int> sucursalId,
+      Value<String?> sucursalNombre,
+      Value<int> vinculadoPorUsuarioId,
+      Value<String> vinculadoEn,
+    });
+
+final class $DispositivoConfigReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          DispositivoConfig,
+          DispositivoConfigData
+        > {
+  $DispositivoConfigReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static Usuario _vinculadoPorUsuarioIdTable(_$AppDatabase db) => db.usuario
+      .createAlias('dispositivo_config__vinculado_por_usuario_id__usuario__id');
+
+  $UsuarioProcessedTableManager get vinculadoPorUsuarioId {
+    final $_column = $_itemColumn<int>('vinculado_por_usuario_id')!;
+
+    final manager = $UsuarioTableManager(
+      $_db,
+      $_db.usuario,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(
+      _vinculadoPorUsuarioIdTable($_db),
+    );
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $DispositivoConfigFilterComposer
+    extends Composer<_$AppDatabase, DispositivoConfig> {
+  $DispositivoConfigFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sucursalId => $composableBuilder(
+    column: $table.sucursalId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sucursalNombre => $composableBuilder(
+    column: $table.sucursalNombre,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get vinculadoEn => $composableBuilder(
+    column: $table.vinculadoEn,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $UsuarioFilterComposer get vinculadoPorUsuarioId {
+    final $UsuarioFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.vinculadoPorUsuarioId,
+      referencedTable: $db.usuario,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $UsuarioFilterComposer(
+            $db: $db,
+            $table: $db.usuario,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $DispositivoConfigOrderingComposer
+    extends Composer<_$AppDatabase, DispositivoConfig> {
+  $DispositivoConfigOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sucursalId => $composableBuilder(
+    column: $table.sucursalId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sucursalNombre => $composableBuilder(
+    column: $table.sucursalNombre,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get vinculadoEn => $composableBuilder(
+    column: $table.vinculadoEn,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $UsuarioOrderingComposer get vinculadoPorUsuarioId {
+    final $UsuarioOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.vinculadoPorUsuarioId,
+      referencedTable: $db.usuario,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $UsuarioOrderingComposer(
+            $db: $db,
+            $table: $db.usuario,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $DispositivoConfigAnnotationComposer
+    extends Composer<_$AppDatabase, DispositivoConfig> {
+  $DispositivoConfigAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get sucursalId => $composableBuilder(
+    column: $table.sucursalId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sucursalNombre => $composableBuilder(
+    column: $table.sucursalNombre,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get vinculadoEn => $composableBuilder(
+    column: $table.vinculadoEn,
+    builder: (column) => column,
+  );
+
+  $UsuarioAnnotationComposer get vinculadoPorUsuarioId {
+    final $UsuarioAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.vinculadoPorUsuarioId,
+      referencedTable: $db.usuario,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $UsuarioAnnotationComposer(
+            $db: $db,
+            $table: $db.usuario,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $DispositivoConfigTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          DispositivoConfig,
+          DispositivoConfigData,
+          $DispositivoConfigFilterComposer,
+          $DispositivoConfigOrderingComposer,
+          $DispositivoConfigAnnotationComposer,
+          $DispositivoConfigCreateCompanionBuilder,
+          $DispositivoConfigUpdateCompanionBuilder,
+          (DispositivoConfigData, $DispositivoConfigReferences),
+          DispositivoConfigData,
+          PrefetchHooks Function({bool vinculadoPorUsuarioId})
+        > {
+  $DispositivoConfigTableManager(_$AppDatabase db, DispositivoConfig table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $DispositivoConfigFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $DispositivoConfigOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $DispositivoConfigAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> sucursalId = const Value.absent(),
+                Value<String?> sucursalNombre = const Value.absent(),
+                Value<int> vinculadoPorUsuarioId = const Value.absent(),
+                Value<String> vinculadoEn = const Value.absent(),
+              }) => DispositivoConfigCompanion(
+                id: id,
+                sucursalId: sucursalId,
+                sucursalNombre: sucursalNombre,
+                vinculadoPorUsuarioId: vinculadoPorUsuarioId,
+                vinculadoEn: vinculadoEn,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int sucursalId,
+                Value<String?> sucursalNombre = const Value.absent(),
+                required int vinculadoPorUsuarioId,
+                Value<String> vinculadoEn = const Value.absent(),
+              }) => DispositivoConfigCompanion.insert(
+                id: id,
+                sucursalId: sucursalId,
+                sucursalNombre: sucursalNombre,
+                vinculadoPorUsuarioId: vinculadoPorUsuarioId,
+                vinculadoEn: vinculadoEn,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<DispositivoConfig, DispositivoConfigData>(table),
+                  $DispositivoConfigReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({vinculadoPorUsuarioId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (vinculadoPorUsuarioId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.vinculadoPorUsuarioId,
+                        referencedTable: $DispositivoConfigReferences
+                            ._vinculadoPorUsuarioIdTable(db),
+                        referencedColumn: $DispositivoConfigReferences
+                            ._vinculadoPorUsuarioIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $DispositivoConfigProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      DispositivoConfig,
+      DispositivoConfigData,
+      $DispositivoConfigFilterComposer,
+      $DispositivoConfigOrderingComposer,
+      $DispositivoConfigAnnotationComposer,
+      $DispositivoConfigCreateCompanionBuilder,
+      $DispositivoConfigUpdateCompanionBuilder,
+      (DispositivoConfigData, $DispositivoConfigReferences),
+      DispositivoConfigData,
+      PrefetchHooks Function({bool vinculadoPorUsuarioId})
     >;
 typedef $CajaSesionCreateCompanionBuilder = CajaSesionCompanion Function({
   Value<int> id,
@@ -24696,6 +26522,10 @@ class $AppDatabaseManager {
   $TerminalTableManager get terminal =>
       $TerminalTableManager(_db, _db.terminal);
   $UsuarioTableManager get usuario => $UsuarioTableManager(_db, _db.usuario);
+  $CredencialOfflineTableManager get credencialOffline =>
+      $CredencialOfflineTableManager(_db, _db.credencialOffline);
+  $DispositivoConfigTableManager get dispositivoConfig =>
+      $DispositivoConfigTableManager(_db, _db.dispositivoConfig);
   $CajaSesionTableManager get cajaSesion =>
       $CajaSesionTableManager(_db, _db.cajaSesion);
   $CategoriaTableManager get categoria =>
