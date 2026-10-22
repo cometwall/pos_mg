@@ -198,6 +198,44 @@ void main() {
     );
   });
 
+  test('cancelar venta revierte el inventario fisico de envase recibido', () async {
+    final ventaId = await ventas.registrarVentaConPago(
+      terminalId: terminalId,
+      folio: 'V003b',
+      usuarioId: usuarioId,
+      items: [
+        ItemVenta(
+          productoId: productoId,
+          cantidad: 1,
+          precioUnitarioCentavos: 1500,
+          costoUnitarioCentavos: 900,
+        ),
+      ],
+      cobros: const [Cobro(metodo: MetodoPago.efectivo, montoCentavos: 1500)],
+      cajaSesionId: sesionId,
+      operacionesEnvase: [
+        OperacionEnvaseVenta(
+          tipoEnvaseId: tipoEnvaseId,
+          tipo: TipoOperacionEnvase.recibido,
+          cantidad: 2,
+        ),
+      ],
+    );
+    // 10 iniciales (setUp) + 2 recibidos en la venta.
+    expect(await envases.saldoFisico(tipoEnvaseId), 12);
+
+    await ventas.cancelarVenta(
+      ventaId: ventaId,
+      usuarioId: usuarioId,
+      cajaSesionId: sesionId,
+    );
+
+    // "Recibido" no deja pendiente en ninguna cuenta (a diferencia de
+    // depósito/préstamo): sin la reversión explícita en `cancelarVenta`,
+    // este saldo se quedaría en 12 para siempre.
+    expect(await envases.saldoFisico(tipoEnvaseId), 10);
+  });
+
   test('cancelar venta con pago TARJETA se rechaza', () async {
     final ventaId = await ventas.registrarVentaConPago(
       terminalId: terminalId,

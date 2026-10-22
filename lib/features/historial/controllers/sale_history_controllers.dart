@@ -2,9 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/providers.dart';
 import '../../../database/app_database.dart';
+import '../../../database/repositories/venta_repository.dart';
 
 /// Historial de ventas, más recientes primero.
-final ventasHistorialProvider = StreamProvider<List<VentaData>>(
+final ventasHistorialProvider = StreamProvider<List<VentaHistorialItem>>(
   (ref) => ref.watch(ventaRepositoryProvider).observarVentas(),
 );
 

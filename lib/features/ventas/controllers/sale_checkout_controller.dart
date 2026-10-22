@@ -43,6 +43,27 @@ class SaleCheckoutService {
     required List<SaleCartLine> lineas,
     required List<Cobro> cobros,
   }) async {
+    // Red de seguridad: `EnvaseDialog` ya bloquea "Guardar" si una línea
+    // no cubre exactamente sus unidades (depósito+préstamo+entregado;
+    // "recibido" no cuenta, es independiente de la cantidad vendida),
+    // pero una línea puede desincronizarse después si el cajero cambia
+    // la cantidad en el carrito sin reabrir el diálogo (ver aviso ámbar
+    // en `sale_cart.dart`) — esto lo atrapa antes de cobrar en vez de
+    // dejar que el inventario físico de envases quede mal contado.
+    for (final linea in lineas) {
+      if (linea.tipoEnvaseId == null) continue;
+      final objetivo = linea.esPorPeso ? 1 : linea.cantidad;
+      final cubierto = linea.operacionesEnvase
+          .where((o) => o.tipo != TipoOperacionEnvase.recibido)
+          .fold<int>(0, (acc, o) => acc + o.cantidad);
+      if (cubierto != objetivo) {
+        return CheckoutFallido(
+          'El envase de "${linea.nombre}" no está bien configurado '
+          '(cubre $cubierto de $objetivo). Ábrelo desde el carrito y ajústalo.',
+        );
+      }
+    }
+
     final folio = 'V${DateTime.now().microsecondsSinceEpoch}';
     final items = [
       for (final linea in lineas)

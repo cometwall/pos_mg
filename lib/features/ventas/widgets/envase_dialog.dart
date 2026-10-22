@@ -220,13 +220,22 @@ class _EnvaseDialogState extends ConsumerState<EnvaseDialog> {
             TextButton(
               // Sin resultado (no un `_Resultado([])`): cancelar debe
               // significar "no cambiar nada", igual que cerrar el diálogo
-              // tocando fuera de él — a diferencia de dejar las 4
-              // cantidades en 0 y dar Guardar, que sí es una decisión
-              // explícita de limpiar las operaciones configuradas.
+              // tocando fuera de él.
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('Cancelar'),
             ),
-            FilledButton(onPressed: () => _confirmar(context), child: const Text('Guardar')),
+            FilledButton(
+              // Depósito + préstamo + entregado deben cubrir EXACTAMENTE
+              // las unidades vendidas — ni de más ni de menos; igual que
+              // vuelve a validar `SaleCheckoutService.cobrar` justo antes
+              // de cobrar, por si la línea cambió de cantidad después de
+              // guardarse aquí. Antes se permitía "Guardar" con cualquier
+              // cobertura (incluso 0, como atajo de "sin operación de
+              // envase"), lo que dejaba el inventario físico de envases
+              // desincronizado de las unidades realmente vendidas.
+              onPressed: cubreTodo ? () => _confirmar(context) : null,
+              child: const Text('Guardar'),
+            ),
           ],
         );
       },

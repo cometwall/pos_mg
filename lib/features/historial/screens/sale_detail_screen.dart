@@ -46,6 +46,7 @@ class _SaleDetailBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final detalleAsync = ref.watch(detalleVentaProvider(venta.id));
     final pagosAsync = ref.watch(pagosVentaProvider(venta.id));
+    final devolucionesAsync = ref.watch(devolucionesVentaProvider(venta.id));
     final operacionesEnvaseAsync = ref.watch(operacionesEnvaseVentaProvider(venta.id));
     final tieneTarjetaAsync = ref.watch(tienePagoTarjetaProvider(venta.id));
     final clienteAsync = venta.clienteId != null
@@ -93,6 +94,22 @@ class _SaleDetailBody extends ConsumerWidget {
             child: CircularProgressIndicator(),
           ),
           error: (error, _) => Text('Error: $error'),
+        ),
+        devolucionesAsync.when(
+          data: (devoluciones) {
+            if (devoluciones.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 16),
+                const Text('Devoluciones', style: TextStyle(fontWeight: FontWeight.w700)),
+                const Divider(),
+                for (final devolucion in devoluciones) _DevolucionTile(devolucion: devolucion),
+              ],
+            );
+          },
+          loading: () => const SizedBox.shrink(),
+          error: (_, _) => const SizedBox.shrink(),
         ),
         operacionesEnvaseAsync.when(
           data: (operaciones) {
@@ -416,6 +433,30 @@ String _mensajeError(Object error) {
     return error.message?.toString() ?? 'Se necesita abrir la caja para completar el reembolso en efectivo.';
   }
   return 'No se pudo completar la operación: $error';
+}
+
+/// Fila de una devolución ya registrada contra esta venta (histórico,
+/// no editable — ver doc de [DevolucionRepository.registrarDevolucion]).
+class _DevolucionTile extends ConsumerWidget {
+  const _DevolucionTile({required this.devolucion});
+
+  final DevolucionData devolucion;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nombreAsync = ref.watch(nombreProductoProvider(devolucion.productoId));
+    final esDanado = devolucion.condicion == 'DAÑADO';
+
+    return ListTile(
+      dense: true,
+      title: Text('${nombreAsync.value ?? 'Producto #${devolucion.productoId}'} × ${devolucion.cantidad}'),
+      subtitle: Text(
+        '${devolucion.fecha} · ${esDanado ? 'Dañado' : 'Bueno'}',
+        style: TextStyle(color: esDanado ? Colors.red.shade700 : Colors.black54),
+      ),
+      trailing: MoneyDisplay(devolucion.montoDevueltoCentavos),
+    );
+  }
 }
 
 /// Fila de una operación de envase registrada en la venta original

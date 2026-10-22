@@ -100,6 +100,17 @@ class ReembolsoTarjetaNoSoportadoException implements Exception {
       'debe resolverse manualmente fuera del sistema';
 }
 
+/// Fila del historial de ventas con un flag computado (no persistido en
+/// `venta`): si tiene al menos una fila en `devolucion`, aunque la venta
+/// siga `COMPLETADA` (una devolución parcial no cambia `estado`, eso solo
+/// lo hace `cancelarVenta`).
+class VentaHistorialItem {
+  const VentaHistorialItem({required this.venta, required this.tieneDevolucion});
+
+  final VentaData venta;
+  final bool tieneDevolucion;
+}
+
 class TerminalCajaNoCoincideException implements Exception {
   TerminalCajaNoCoincideException();
 
@@ -246,7 +257,9 @@ class VentaRepository {
   /// depósitos, préstamos de envase, deuda monetaria) a cero desde su
   /// estado NETO PENDIENTE — no revierte ciegamente el documento
   /// original: si ya hubo devoluciones parciales, solo se revierte lo
-  /// que seguía activo. Rechaza la operación si la venta tuvo algún
+  /// que seguía activo. También revierte el inventario físico de
+  /// envase "recibido" (sin cuenta de pendiente propia, ver lectura de
+  /// [recibidos] más abajo). Rechaza la operación si la venta tuvo algún
   /// pago con tarjeta (ver [ReembolsoTarjetaNoSoportadoException]).
   Future<void> cancelarVenta({
     required int ventaId,
@@ -297,6 +310,15 @@ class VentaRepository {
       }
 
       final deudaPendiente = await _cuentas.deudaPendienteVenta(ventaId);
+
+      // "Recibido" (envase vacío que el cliente entrega sin relación a
+      // depósito/préstamo) no deja pendiente en ninguna cuenta — es la
+      // única rama de `operacion_envase` sin su propio ledger de
+      // reversión — así que hay que leerla directo de la tabla de
+      // hechos de la venta para no perderla al cancelar.
+      final recibidos = await (_db.select(_db.operacionEnvase)..where(
+        (o) => o.ventaId.equals(ventaId) & o.tipo.equals('RECIBIDO'),
+      )).get();
 
       // --- Escritura: primero el estado (único campo editable) ---
       await (_db.update(
@@ -382,6 +404,24 @@ class VentaRepository {
             tipoEnvaseId: entry.key,
             tipo: 'CANCELACION',
             cantidad: entry.value,
+            referenciaTipo: const Value('CANCELACION_VENTA'),
+            referenciaId: Value(ventaId),
+            usuarioId: usuarioId,
+          ),
+        );
+      }
+
+      // Revierte la entrada física que dejó cada "recibido" (ver lectura
+      // de [recibidos] arriba): esa cantidad entró al inventario de
+      // envases sin pasar por ninguna cuenta de pendiente, así que
+      // cancelar la venta debe sacarla de vuelta explícitamente o el
+      // conteo físico queda inflado para siempre.
+      for (final recibido in recibidos) {
+        await _db.into(_db.envaseInventarioMov).insert(
+          EnvaseInventarioMovCompanion.insert(
+            tipoEnvaseId: recibido.tipoEnvaseId,
+            tipo: 'CANCELACION',
+            cantidad: -recibido.cantidad,
             referenciaTipo: const Value('CANCELACION_VENTA'),
             referenciaId: Value(ventaId),
             usuarioId: usuarioId,
@@ -653,13 +693,25 @@ class VentaRepository {
   }
 
   /// Historial de ventas, más recientes primero, como stream: se
-  /// refresca solo cuando cambia la tabla (nueva venta, cancelación).
-  Stream<List<VentaData>> observarVentas() {
-    return (_db.select(_db.venta)..orderBy([
-          (v) => OrderingTerm.desc(v.fecha),
-          (v) => OrderingTerm.desc(v.id),
-        ]))
-        .watch();
+  /// refresca cuando cambia `venta` (nueva venta, cancelación) o
+  /// `devolucion` (para mantener [VentaHistorialItem.tieneDevolucion]
+  /// al día).
+  Stream<List<VentaHistorialItem>> observarVentas() {
+    final tieneDevolucion = existsQuery(
+      _db.select(_db.devolucion)..where((d) => d.ventaId.equalsExp(_db.venta.id)),
+    );
+    final query = _db.select(_db.venta).addColumns([tieneDevolucion])
+      ..orderBy([OrderingTerm.desc(_db.venta.fecha), OrderingTerm.desc(_db.venta.id)]);
+
+    return query.watch().map(
+      (filas) => [
+        for (final fila in filas)
+          VentaHistorialItem(
+            venta: fila.readTable(_db.venta),
+            tieneDevolucion: fila.read(tieneDevolucion) ?? false,
+          ),
+      ],
+    );
   }
 
   Future<VentaData?> obtenerPorId(int ventaId) {

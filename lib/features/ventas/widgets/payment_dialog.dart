@@ -5,7 +5,7 @@ import '../../../database/repositories/pago_repository.dart';
 import '../../../database/repositories/venta_repository.dart';
 import '../../../shared/widgets/money_display.dart';
 
-enum _MetodoTab { efectivo, tarjeta, mixto }
+enum _MetodoTab { efectivo, tarjeta }
 
 /// Diálogo de cobro. Devuelve la lista de [Cobro] elegida por el cajero
 /// (o `null` si se canceló) — nunca ejecuta el cobro él mismo, eso lo
@@ -63,8 +63,6 @@ class _PaymentDialogState extends State<PaymentDialog> {
   _MetodoTab _tab = _MetodoTab.efectivo;
 
   final _efectivoRecibidoController = TextEditingController();
-  final _mixtoEfectivoController = TextEditingController();
-  final _mixtoTarjetaController = TextEditingController();
 
   @override
   void initState() {
@@ -75,8 +73,6 @@ class _PaymentDialogState extends State<PaymentDialog> {
   @override
   void dispose() {
     _efectivoRecibidoController.dispose();
-    _mixtoEfectivoController.dispose();
-    _mixtoTarjetaController.dispose();
     super.dispose();
   }
 
@@ -108,7 +104,6 @@ class _PaymentDialogState extends State<PaymentDialog> {
               segments: const [
                 ButtonSegment(value: _MetodoTab.efectivo, label: Text('Efectivo')),
                 ButtonSegment(value: _MetodoTab.tarjeta, label: Text('Tarjeta')),
-                ButtonSegment(value: _MetodoTab.mixto, label: Text('Mixto')),
               ],
               selected: {_tab},
               onSelectionChanged: (seleccion) => setState(() => _tab = seleccion.first),
@@ -133,13 +128,6 @@ class _PaymentDialogState extends State<PaymentDialog> {
                 onChanged: () => setState(() {}),
               ),
               _MetodoTab.tarjeta => const _TarjetaPanel(),
-              _MetodoTab.mixto => _MixtoPanel(
-                totalCentavos: widget.totalCentavos,
-                depositoCentavos: widget.depositoCentavos,
-                efectivoController: _mixtoEfectivoController,
-                tarjetaController: _mixtoTarjetaController,
-                onChanged: () => setState(() {}),
-              ),
             },
           ],
         ),
@@ -167,12 +155,6 @@ class _PaymentDialogState extends State<PaymentDialog> {
         return recibido >= widget.totalCentavos;
       case _MetodoTab.tarjeta:
         return true;
-      case _MetodoTab.mixto:
-        final efectivo = parseCentavosDesdeTexto(_mixtoEfectivoController.text) ?? 0;
-        final tarjeta = parseCentavosDesdeTexto(_mixtoTarjetaController.text) ?? 0;
-        return efectivo >= widget.depositoCentavos &&
-            tarjeta >= 0 &&
-            efectivo + tarjeta == widget.totalCentavos;
     }
   }
 
@@ -188,15 +170,6 @@ class _PaymentDialogState extends State<PaymentDialog> {
         return [Cobro(metodo: MetodoPago.efectivo, montoCentavos: widget.productoCentavos)];
       case _MetodoTab.tarjeta:
         return [Cobro(metodo: MetodoPago.tarjeta, montoCentavos: widget.productoCentavos)];
-      case _MetodoTab.mixto:
-        final efectivo = parseCentavosDesdeTexto(_mixtoEfectivoController.text) ?? 0;
-        final tarjeta = parseCentavosDesdeTexto(_mixtoTarjetaController.text) ?? 0;
-        final efectivoProducto = efectivo - widget.depositoCentavos;
-        return [
-          if (efectivoProducto > 0)
-            Cobro(metodo: MetodoPago.efectivo, montoCentavos: efectivoProducto),
-          if (tarjeta > 0) Cobro(metodo: MetodoPago.tarjeta, montoCentavos: tarjeta),
-        ];
     }
   }
 }
@@ -358,62 +331,3 @@ class _TarjetaPanel extends StatelessWidget {
   }
 }
 
-class _MixtoPanel extends StatelessWidget {
-  const _MixtoPanel({
-    required this.totalCentavos,
-    required this.efectivoController,
-    required this.tarjetaController,
-    required this.onChanged,
-    this.depositoCentavos = 0,
-  });
-
-  final int totalCentavos;
-  final int depositoCentavos;
-  final TextEditingController efectivoController;
-  final TextEditingController tarjetaController;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final efectivo = parseCentavosDesdeTexto(efectivoController.text) ?? 0;
-    final tarjeta = parseCentavosDesdeTexto(tarjetaController.text) ?? 0;
-    final restante = totalCentavos - efectivo - tarjeta;
-    final faltaCubrirDeposito = efectivo < depositoCentavos;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: efectivoController,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText: 'Monto en efectivo',
-            prefixText: r'$',
-            helperText: depositoCentavos > 0
-                ? 'Debe cubrir al menos el depósito de envase (${formatCentavos(depositoCentavos)})'
-                : null,
-          ),
-          onChanged: (_) => onChanged(),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: tarjetaController,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Monto en tarjeta', prefixText: r'$'),
-          onChanged: (_) => onChanged(),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          faltaCubrirDeposito
-              ? 'El efectivo no alcanza a cubrir el depósito de envase.'
-              : restante == 0
-              ? 'Los montos cubren el total exacto.'
-              : 'Falta ${formatCentavos(restante)} para cubrir el total.',
-          style: TextStyle(
-            color: faltaCubrirDeposito || restante != 0 ? Colors.red.shade700 : Colors.green.shade700,
-          ),
-        ),
-      ],
-    );
-  }
-}
