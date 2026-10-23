@@ -119,18 +119,45 @@ class _TipoEnvaseCard extends ConsumerWidget {
                 ],
               ),
             const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: () => _registrarEntrada(context, ref),
-                icon: const Icon(Icons.add),
-                label: const Text('Registrar entrada de stock'),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _registrarMerma(context, ref, saldoAsync.value ?? 0),
+                  icon: const Icon(Icons.remove),
+                  label: const Text('Registrar merma'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () => _registrarEntrada(context, ref),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Registrar entrada de stock'),
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _registrarMerma(BuildContext context, WidgetRef ref, int saldoFisico) async {
+    final cantidad = await showDialog<int>(
+      context: context,
+      builder: (_) => _MermaEnvaseDialog(tipoEnvase: tipo, saldoFisico: saldoFisico),
+    );
+    if (cantidad == null) return;
+
+    final usuario = await ref.read(currentUsuarioProvider.future);
+    try {
+      await ref
+          .read(envaseRepositoryProvider)
+          .registrarMerma(tipoEnvaseId: tipo.id, cantidad: cantidad, usuarioId: usuario.id);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
   }
 
   Future<void> _registrarEntrada(BuildContext context, WidgetRef ref) async {
@@ -285,6 +312,60 @@ class _EntradaEnvaseDialogState extends State<_EntradaEnvaseDialog> {
     Navigator.of(context).pop(
       _EntradaEnvaseResultado(origen: _origen, cantidad: cantidad, montoCentavos: monto),
     );
+  }
+}
+
+class _MermaEnvaseDialog extends StatefulWidget {
+  const _MermaEnvaseDialog({required this.tipoEnvase, required this.saldoFisico});
+
+  final TipoEnvaseData tipoEnvase;
+  final int saldoFisico;
+
+  @override
+  State<_MermaEnvaseDialog> createState() => _MermaEnvaseDialogState();
+}
+
+class _MermaEnvaseDialogState extends State<_MermaEnvaseDialog> {
+  final _cantidadController = TextEditingController();
+
+  @override
+  void dispose() {
+    _cantidadController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Registrar merma · ${widget.tipoEnvase.nombre}'),
+      content: TextField(
+        controller: _cantidadController,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(
+          labelText: 'Cantidad perdida (rotura, extravío)',
+          helperText: 'Stock físico actual: ${widget.saldoFisico}',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _confirmar, child: const Text('Registrar')),
+      ],
+    );
+  }
+
+  void _confirmar() {
+    final cantidad = int.tryParse(_cantidadController.text);
+    if (cantidad == null || cantidad <= 0 || cantidad > widget.saldoFisico) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Cantidad inválida')));
+      return;
+    }
+    Navigator.of(context).pop(cantidad);
   }
 }
 

@@ -215,4 +215,28 @@ void main() {
     final movimientos = await caja.listarMovimientos(sesionId);
     expect(movimientos.single.montoCentavos, -8000);
   });
+
+  test('registrarMerma descuenta el stock fisico sin mover caja', () async {
+    await envases.registrarMerma(
+      tipoEnvaseId: tipoEnvaseId,
+      cantidad: 5,
+      usuarioId: usuarioId,
+    );
+
+    expect(await envases.saldoFisico(tipoEnvaseId), 45);
+    expect(await caja.listarMovimientos(sesionId), isEmpty);
+  });
+
+  test('registrarMerma por mas de lo disponible se rechaza sin tocar la base', () async {
+    await expectLater(
+      envases.registrarMerma(
+        tipoEnvaseId: tipoEnvaseId,
+        cantidad: 51,
+        usuarioId: usuarioId,
+      ),
+      throwsA(isA<StockEnvaseInsuficienteException>()),
+    );
+
+    expect(await envases.saldoFisico(tipoEnvaseId), 50);
+  });
 }

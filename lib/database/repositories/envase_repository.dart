@@ -350,6 +350,42 @@ class EnvaseRepository {
     );
   }
 
+  /// Registra una pérdida física de envases (rotura, extravío) sin
+  /// relación a ninguna venta ni cancelación — la única baja manual del
+  /// inventario de envases; al alza ya existen
+  /// [registrarCompraAProveedor]/[comprarEnvaseACliente]. A diferencia
+  /// del inventario de producto (`inventario_saldo.cantidad_actual >=
+  /// 0` lo blinda un CHECK), no hay tabla materializada para envases,
+  /// así que esta validación contra el stock físico actual es
+  /// responsabilidad 100% de esta capa.
+  Future<int> registrarMerma({
+    required int tipoEnvaseId,
+    required int cantidad,
+    required int usuarioId,
+  }) async {
+    if (cantidad <= 0) {
+      throw ArgumentError.value(cantidad, 'cantidad', 'Debe ser mayor que 0');
+    }
+
+    final saldoFisico = await _cuentas.saldoFisicoEnvase(tipoEnvaseId);
+    if (cantidad > saldoFisico) {
+      throw StockEnvaseInsuficienteException(
+        tipoEnvaseId: tipoEnvaseId,
+        solicitado: cantidad,
+        disponible: saldoFisico,
+      );
+    }
+
+    return _db.into(_db.envaseInventarioMov).insert(
+      EnvaseInventarioMovCompanion.insert(
+        tipoEnvaseId: tipoEnvaseId,
+        tipo: 'MERMA',
+        cantidad: -cantidad,
+        usuarioId: usuarioId,
+      ),
+    );
+  }
+
   Future<int> saldoFisico(int tipoEnvaseId) => _cuentas.saldoFisicoEnvase(tipoEnvaseId);
 
   /// Versión reactiva de [saldoFisico] (ver [CuentasQueries.observarSaldoFisicoEnvase]).
